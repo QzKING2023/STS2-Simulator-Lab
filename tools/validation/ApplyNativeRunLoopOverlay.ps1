@@ -30,7 +30,7 @@ $anchor = '                if (Environment.GetEnvironmentVariable("SIMULATORLAB_
 $insert = @'
                 if (Environment.GetEnvironmentVariable("SIMULATORLAB_NATIVE_LOOP_STAGE") == "Loop")
                 {
-                    object result = NativeModRunLoop.RunLoop(combat!, loop, options.OutputDirectory, outcome.RouteActions);
+                    object result = NativeModRunLoop.RunLoop(combat!, loop, options.OutputDirectory, outcome.RouteActions, options);
                     payload["nativeLoop"] = result;
                     if (JsonSerializer.SerializeToElement(result).GetProperty("status").GetString() != "passed")
                         throw new InvalidOperationException("Native run loop did not pass; see native-run-loop.json.");

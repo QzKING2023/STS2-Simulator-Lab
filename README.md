@@ -11,7 +11,7 @@ The implementation targets game **v0.111.0 / 41cef1ea** and a separately locked 
 - The minimum offline run loop executes **Victory → native rewards → legal next node → next battle's first actionable state**. Gold collection plus card-skip and card-take policies repeat in separate processes with the same fixed battle plan.
 - A separate power API fixture verifies temporary Recording expiry and nonzero Record/Echo cleanup across combats.
 
-This is a validation milestone, not complete character support, independent reward prediction, balance analysis or a full-run optimizer. ManaShield acquisition and next-combat presence pass; its OnPlay is not yet adapted. The six candidate Echo cards are absent from the pinned input.
+This is a validation milestone, not complete character support, independent reward prediction, balance analysis or a full-run optimizer. The published minimum-loop snapshot stops at next-combat first action. The local two-battle milestone additionally adapts ManaShield and validates both reward policies through the second Victory; see [two-battle validation](docs/TWO_BATTLE_VALIDATION.md). The six candidate Echo cards remain absent from the pinned input.
 
 See [milestone scope](docs/MILESTONE_STATUS.md), [validation setup](docs/VALIDATION.md), and [implementation provenance](docs/PROBE_PROVENANCE.md).
 

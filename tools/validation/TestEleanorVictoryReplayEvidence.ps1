@@ -30,7 +30,10 @@ Check 'native terminal completed' ($report.status -eq 'passed' -and $report.nati
 Check 'isolated host and write guards' ($report.testMode -and -not $report.steamInitialized -and $report.saveStore -eq 'MemorySaveStore' -and $report.replayAndSaveGuardsInstalled -and $report.interceptedReplayWrites -eq 1 -and $report.interceptedProgressSaves -eq 1 -and -not $report.persistentWritesAllowed)
 Check 'presentation cleanup invoked once' ($report.headlessUiCleanup.target -eq 'NHoverTipSet.Clear()' -and $report.headlessUiCleanup.interceptedCalls -eq 1)
 $negativeFlags = @($report.registrationEvidence | ForEach-Object { $_.PSObject.Properties | Where-Object { $_.Value -is [bool] } })
-Check 'recorded strict registration controls passed' ($report.registrationEvidence.Count -eq 9 -and $negativeFlags.Count -gt 0 -and @($negativeFlags | Where-Object { -not $_.Value }).Count -eq 0)
+# Preserve the published nine-row baseline; the new exact ManaShield adapter adds one complete control row.
+$shieldControls=@($report.registrationEvidence|Where-Object {$_.cardType-eq'MyMod.MyModCode.Cards.ManaShield'})
+$shieldValid=$shieldControls.Count-eq0-or($shieldControls.Count-eq1-and$shieldControls[0].wrongTargetRejected-and$shieldControls[0].wrongAssemblyRejected-and$shieldControls[0].wrongManifestRejected-and$shieldControls[0].existingPatchRejected)
+Check 'recorded strict registration controls passed' ($shieldValid -and $report.registrationEvidence.Count -eq (9+$shieldControls.Count) -and $negativeFlags.Count -gt 0 -and @($negativeFlags | Where-Object { -not $_.Value }).Count -eq 0)
 Check 'opening roots' (EqualJson $nodes['nativeOpeningRoot'] $nodes['simulatorOpeningRoot'])
 Check 'opening continuations' ($report.nativeOpeningContinuation -ceq $report.simulatorOpeningContinuation)
 $lastNative = $nodes['nativeOpeningRoot']

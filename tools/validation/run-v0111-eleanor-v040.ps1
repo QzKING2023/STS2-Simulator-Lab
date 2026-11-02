@@ -9,7 +9,8 @@ param(
     [string]$VictoryReplayPlanPath = '',
     [ValidateSet('Mentor','Reverse')][string]$VictoryReplayForm = 'Reverse',
     [ValidateSet('','Pool','Loop')][string]$NativeLoopStage = '',
-    [ValidateSet('skip','take')][string]$NativeRewardPolicy = 'skip'
+    [ValidateSet('skip','take')][string]$NativeRewardPolicy = 'skip',
+    [switch]$SecondBattle
 )
 
 $ErrorActionPreference = 'Stop'
@@ -77,7 +78,7 @@ $required = @(
 foreach ($path in $required) { if (-not (Test-Path -LiteralPath $path)) { throw "Required offline input missing: $path" } }
 
 $sourceNames = @(
-    'EleanorV040Probe.cs', 'EleanorModBootstrap.cs', 'NativeModRunLoop.cs', 'NativeModProgression.cs', 'ApplyNativeRunLoopOverlay.ps1', 'HarmonyPatchMetadataProbe.cs',
+    'EleanorV040Probe.cs', 'EleanorModBootstrap.cs', 'NativeModRunLoop.cs', 'NativeModProgression.cs', 'NativeSecondBattle.cs', 'ApplyNativeRunLoopOverlay.ps1', 'HarmonyPatchMetadataProbe.cs',
     'VanillaCombatRootAdapter.cs', 'VanillaGameActionProbe.cs',
     'ApplyCombatSolverNoPatchCardMirrorOverlay.ps1', 'ApplyCombatSolverNoPatchCardResultLocationOverlay.ps1',
     'ApplyCombatSolverNoPatchPowerHookOverlay.ps1', 'ApplyCombatSolverNoPatchPowerTurnStartOverlay.ps1',
@@ -129,7 +130,7 @@ $overlayFiles = @(Get-ChildItem -LiteralPath (Join-Path $cacheRoot 'src') -Recur
 [IO.File]::WriteAllText($overlayLock,([ordered]@{revision=$revision;files=$overlayFiles} | ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
 }
 $harnessRoot = Join-Path $cacheRoot 'tools\search\OfflineSearchHarness'
-foreach ($name in @('EleanorV040Probe.cs', 'EleanorModBootstrap.cs', 'NativeModRunLoop.cs', 'NativeModProgression.cs', 'HarmonyPatchMetadataProbe.cs', 'VanillaCombatRootAdapter.cs', 'VanillaGameActionProbe.cs')) {
+foreach ($name in @('EleanorV040Probe.cs', 'EleanorModBootstrap.cs', 'NativeModRunLoop.cs', 'NativeModProgression.cs', 'NativeSecondBattle.cs', 'HarmonyPatchMetadataProbe.cs', 'VanillaCombatRootAdapter.cs', 'VanillaGameActionProbe.cs')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $harnessRoot $name) -Force
 }
 
@@ -283,11 +284,12 @@ if ($NativeLoopStage) {
     $env:SIMULATORLAB_NATIVE_PROFILE = $profile
     $env:SIMULATORLAB_NATIVE_LOOP_STAGE = $NativeLoopStage
     $env:SIMULATORLAB_NATIVE_REWARD_POLICY = $NativeRewardPolicy
+    if($SecondBattle){$env:SIMULATORLAB_NATIVE_SECOND_BATTLE='1'}
     $env:SIMULATORLAB_ELEANOR_V040_FORM = 'Reverse'
     $milestone = if ($NativeLoopStage -eq 'Pool') { 'M1' } else { 'M2' }
     & dotnet $harnessDll @argsBase --milestone $milestone --label "native-$NativeLoopStage-$NativeRewardPolicy" --out (Join-Path $runRoot 'native') *>&1 | Tee-Object -FilePath (Join-Path $runRoot 'native-console.log')
     $nativeExit = $LASTEXITCODE
-    Remove-Item Env:SIMULATORLAB_NATIVE_PROFILE,Env:SIMULATORLAB_NATIVE_LOOP_STAGE,Env:SIMULATORLAB_NATIVE_REWARD_POLICY -ErrorAction SilentlyContinue
+    Remove-Item Env:SIMULATORLAB_NATIVE_PROFILE,Env:SIMULATORLAB_NATIVE_LOOP_STAGE,Env:SIMULATORLAB_NATIVE_REWARD_POLICY,Env:SIMULATORLAB_NATIVE_SECOND_BATTLE -ErrorAction SilentlyContinue
     Write-Output "Native stage $NativeLoopStage exit=$nativeExit; evidence=$runRoot; harness=$harnessRoot"
     exit $nativeExit
 }

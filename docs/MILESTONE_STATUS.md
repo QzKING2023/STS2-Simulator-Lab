@@ -41,3 +41,7 @@ The supported bootstrap is a limited offline test profile. It uses genuine manif
 Complete Orb Reverse upkeep, exact overkill cases, more card effects, full retail callbacks and multiplayer/full loader compatibility remain unverified. No complete role, full-climb, optimal route or balance conclusion is claimed. The six planned Echo cards are absent from the pinned DLL.
 
 Reproduction and output layout are documented in [VALIDATION.md](VALIDATION.md).
+
+## Unpublished second-battle extension
+
+The local milestone adds strict ManaShield OnPlay adaptation and actual acquired-card play after natural drawing, then drives skip/take through the second Victory. The five-process cohort passed 41 artifact/repeat checks. This work is separate from the published minimum-loop commit and has not been pushed. Scope, fixture policy, evidence and regressions are recorded in [TWO_BATTLE_VALIDATION.md](TWO_BATTLE_VALIDATION.md).

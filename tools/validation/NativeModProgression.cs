@@ -36,7 +36,7 @@ internal static partial class NativeModRunLoop
     private static object? RewardCardSupport;
     private static RunProgressStateV1? Protocol;
 
-    public static object RunLoop(CombatState combat, MainLoopContext loop, string output, object route)
+    public static object RunLoop(CombatState combat, MainLoopContext loop, string output, object route, HarnessOptions options)
     {
         var player = LocalContext.GetMe(combat)!;
         var run = (RunState)combat.RunState;
@@ -46,7 +46,7 @@ internal static partial class NativeModRunLoop
             var report = new { schema = "eleanor-native-run-loop/v1", status, reason, phase = Phase, policy,
                 modHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(Environment.GetEnvironmentVariable("SIMULATORLAB_ELEANOR_MOD_DLL")!))),
                 pool = PoolPreflight(), battle = BattleEvidence, rewards = RewardEvidence, lifecycle = Lifecycle,
-                nextBoundary = NextBoundary, protocol=Protocol, recordingFixture=RecordingFixture, rewardCardSupport=RewardCardSupport, semantics = "native reward execution + protocol legality + simulator combat handoffs; no independent reward predictor",
+                nextBoundary = NextBoundary, secondBattle=SecondBattle, protocol=Protocol, recordingFixture=RecordingFixture, rewardCardSupport=RewardCardSupport, semantics = "native reward execution + protocol legality + simulator combat handoffs; no independent reward predictor",
                 offlineGuards=EleanorV040Probe.CaptureOfflineWriteEvidence(), persistentWritesAllowed = false };
             File.WriteAllText(Path.Combine(output,"native-run-loop.json"), JsonSerializer.Serialize(report,Json));
             return report;
@@ -118,7 +118,7 @@ internal static partial class NativeModRunLoop
                 throw new InvalidOperationException("Actual native card acquisition differs from policy.");
             if(acquired!=null) RewardCardSupport=new { card=acquired.Id.ToString(),ordinaryRegisteredOnPlay=CardOnPlayMirrors.CanMirror(acquired),
                 adaptedOnPlay=AdaptedCardOnPlayMirrors.Select(acquired.GetType(),AccessTools.Method(acquired.GetType(),"OnPlay"),Harmony.GetPatchInfo(AccessTools.Method(acquired.GetType(),"OnPlay")))!=null,
-                effectExecution="not-run; first actionable state only", nativeDeckAddition=true };
+                effectExecution=SecondBattleEnabled?"not-run at acquisition; see secondBattle trace":"not-run; first actionable state only", nativeDeckAddition=true };
             Observe("rewards-completed",player,run);
             Phase="map-travel";
             loop.RunUntilCompleted(RunManager.Instance.ProceedFromTerminalRewardsScreen(),TimeSpan.FromSeconds(15),"Proceed to native map");
@@ -154,6 +154,16 @@ internal static partial class NativeModRunLoop
             if (state.GetProperty("Mana").GetInt32()!=3 || state.GetProperty("Echo").GetDecimal()!=0 || state.GetProperty("Stance").GetInt32()!=0 || player.Creature.Block!=0 || player.Creature.Powers.Count!=0)
                 throw new InvalidOperationException("Next CrackedOrb combat failed to open with clean battle resources.");
             NextBoundary=EleanorV040Probe.CaptureNextNativeBoundary(nextCombat);
+            if(SecondBattleEnabled)
+            {
+                Phase="second-battle";
+                SecondBattle=RunSecondBattle(nextCombat,loop,output,acquired,options);
+                var result=JsonSerializer.SerializeToElement(SecondBattle,Json);
+                if(result.GetProperty("status").GetString()!="passed")return Report(result.GetProperty("status").GetString()!,result.GetProperty("reason").GetString());
+                Phase="second-post-combat-cleanup";Observe(Phase,player,run);VerifyReset(player);
+                if(player.Gold!=goldBeforeTravel||!player.Deck.Cards.SequenceEqual(permanentDeck)||!player.Relics.SequenceEqual(persistentRelics))
+                    throw new InvalidOperationException("Persistent resources changed outside native combat effects.");
+            }
             return Report("passed");
         }
         catch (PredictionUnsupportedException ex) { return Report("unsupported",ex.ToString()); }

@@ -83,6 +83,7 @@ internal static class EleanorV040Probe
         RegisterOffensiveDefense(mod, _manifest);
         RegisterManaCardMirror(mod, "ManaStrike", "ManaGather", nameof(DispatchManaStrike));
         RegisterManaCardMirror(mod, "ManaGather", "ManaStrike", nameof(DispatchManaGather));
+        RegisterManaCardMirror(mod, "ManaShield", "ManaStrike", nameof(DispatchManaShield));
         RegisterRecordingPowers(mod, _manifest);
         RegisterTemporaryRecordingTurnStart(mod, _manifest);
         RegisterCrystalOrbTurnStart(mod, _manifest);
@@ -282,7 +283,7 @@ internal static class EleanorV040Probe
         return new { status = overallStatus, exactStateMatch = true, offlineWriteGuards, poolAndFirstDrawPreflight, guidingPower = report, offensiveDefense, recordEcho, reverseUpkeep };
     }
 
-    public static object RunVictoryReplay(CombatState combat, MainLoopContext loop, string outputDirectory, string planPath)
+    public static object RunVictoryReplay(CombatState combat, MainLoopContext loop, string outputDirectory, string planPath, bool allowBoundary = false)
     {
         _loop = loop;
         VanillaGameActionProbe.InstallGodotClockShim();
@@ -340,7 +341,7 @@ internal static class EleanorV040Probe
             return WritePreflightUnsupported("Set the fixed route form to Mentor or Reverse before replay.");
         object liveState = GetLiveManaState(player);
         V040Snapshot opening = CaptureState(_stateType, liveState);
-        if (opening.Stance != "Neutral" || (opening.Echo != 0m && !NativeModRunLoop.RecordFixtureEnabled))
+        if (!allowBoundary && (opening.Stance != "Neutral" || (opening.Echo != 0m && !NativeModRunLoop.RecordFixtureEnabled)))
             return WritePreflightUnsupported($"Native route opening is not an allowed Neutral fixture state: {opening}.");
 
         Type guideType = mod.GetType("MyMod.MyModCode.Cards.GuidingPower", true)!;
@@ -452,6 +453,7 @@ internal static class EleanorV040Probe
                     if (cardOccurrence < 0 || cardOccurrence >= nativeMatches.Length)
                         throw new PredictionUnsupportedException($"Planned card {cardId} occurrence {cardOccurrence} is not in the native hand.");
                     CardModel nativeCard = nativeMatches[cardOccurrence];
+                    NativeModRunLoop.VerifySecondRewardCard(nativeCard);
                     PredictedCard predictedCard = branch.State.FindCard(nativeCard)
                         ?? throw new PredictionUnsupportedException($"Simulator branch cannot resolve the planned {cardId} card instance.");
                     Creature? target = null;
@@ -645,8 +647,8 @@ internal static class EleanorV040Probe
 
         if (status == "running")
         {
-            status = "unsupported";
-            stopReason = "The fixed search route ended before a native Victory or Death.";
+            status = allowBoundary ? "boundary" : "unsupported";
+            stopReason = allowBoundary ? "Explicit partial action prefix ended at an exact live boundary; not a terminal pass." : "The fixed search route ended before a native Victory or Death.";
             stopActionIndex = actions.Length;
         }
         return WriteResult(status, stopActionIndex >= 0 ? stopActionIndex + 1 : null, stopReason);
@@ -848,12 +850,14 @@ internal static class EleanorV040Probe
         _victoryTerminalEvidence = null;
         _victoryTerminalCaptureError = null;
         _suppressedVictoryHoverClears = 0;
+        if (Harmony.GetPatchInfo(candidates[0])?.Prefixes.Any(p=>p.owner==GameBootstrap.Harmony.Id && p.PatchMethod.Name==nameof(CaptureVictoryTerminalPrefix))!=true)
         GameBootstrap.Harmony.Patch(candidates[0], prefix: new HarmonyMethod(
             typeof(EleanorV040Probe).GetMethod(nameof(CaptureVictoryTerminalPrefix), BindingFlags.Static | BindingFlags.NonPublic)!));
         MethodInfo hoverClear = AccessTools.Method(typeof(NHoverTipSet), nameof(NHoverTipSet.Clear), Type.EmptyTypes)
             ?? throw new MissingMethodException(nameof(NHoverTipSet), nameof(NHoverTipSet.Clear));
         if (!hoverClear.IsStatic || hoverClear.ReturnType != typeof(void))
             throw new InvalidOperationException("Pinned hover-tip presentation cleanup signature changed.");
+        if (Harmony.GetPatchInfo(hoverClear)?.Prefixes.Any(p=>p.owner==GameBootstrap.Harmony.Id && p.PatchMethod.Name==nameof(SkipHeadlessVictoryHoverClear))!=true)
         GameBootstrap.Harmony.Patch(hoverClear, prefix: new HarmonyMethod(
             typeof(EleanorV040Probe).GetMethod(nameof(SkipHeadlessVictoryHoverClear), BindingFlags.Static | BindingFlags.NonPublic)!));
     }
@@ -1285,6 +1289,24 @@ internal static class EleanorV040Probe
             .Sum(result => Math.Max(0m, result.UnblockedDamage));
         if (manaPaid)
             context.Simulator.GainBlock(owner, unblocked, (ValueProp)4, context.Card, context.CardPlay);
+        state.FinishCard(transaction);
+    }
+
+    private static void DispatchManaShield<TCard>(TCard card, CardOnPlayMirrorContext context) where TCard : CardModel
+    {
+        Player player=context.PreviewCard.Owner;
+        var state=GetState(context,GetBranchOrb(context.Simulator,player));
+        object transaction=state.BeginCard(context.CardPlay.PlayIndex==0 ? context.CardPlay.Resources.EnergySpent : 0);
+        int cost=Convert.ToInt32(card.GetType().GetProperty("ManaCost")!.GetValue(card));
+        bool paid=state.TryPayMana(cost);
+        var shadow=context.Simulator.State.CombatState as SimulatedCombatState
+            ?? throw new PredictionUnsupportedException("ManaShield requires branch-local combat.");
+        if(paid)
+        {
+            int amount=shadow.EffectivePowers().OfType<PowerModel>().Where(p=>p.GetType().Name=="ManaToShieldPower" && p.Owner==player.Creature).Sum(p=>p.Amount);
+            if(amount>0)context.Simulator.GainBlock(player.Creature,(decimal)amount*cost,(ValueProp)4,context.Card,context.CardPlay);
+        }
+        context.Simulator.GainBlock(player.Creature,card.DynamicVars.Block.BaseValue+(paid?card.DynamicVars["ExtraBlock"].BaseValue:0m),(ValueProp)8,context.Card,context.CardPlay);
         state.FinishCard(transaction);
     }
 

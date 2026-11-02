@@ -38,3 +38,5 @@ The cases runner freezes the first actually passed native battle plan and checks
 The five-process milestone has 24 checks: per-action differential/parent isolation, next-root equality and save/discovery isolation for each process; per-policy lifecycle/reward, terminal/root and full fixed-plan repeat checks; shared reward options, shared prefix plan and nonzero Record/Echo teardown checks.
 
 The separate power API fixture does not represent an implemented Echo card. ManaShield is acquired natively but its effect is not yet adapted. The milestone stops at next-combat first action, and does not establish retail rendering, full framework compatibility, complete character coverage or balance.
+
+The paragraph above describes the published minimum-loop snapshot. The local-only extension adds a strict ManaShield mirror and actual two-battle replays; see [TWO_BATTLE_VALIDATION.md](TWO_BATTLE_VALIDATION.md). It uses real acquired-card DeckVersion checks, native hand resolution, explicit nonterminal prefix results and separate per-policy frozen second-battle plans. It preserves the original audit and partial/full terminal distinction.
