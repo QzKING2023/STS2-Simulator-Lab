@@ -10,7 +10,8 @@ param(
     [ValidateSet('Mentor','Reverse')][string]$VictoryReplayForm = 'Reverse',
     [ValidateSet('','Pool','Loop')][string]$NativeLoopStage = '',
     [ValidateSet('skip','take')][string]$NativeRewardPolicy = 'skip',
-    [switch]$SecondBattle
+    [switch]$SecondBattle,
+    [switch]$BuildOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -78,14 +79,16 @@ $required = @(
 foreach ($path in $required) { if (-not (Test-Path -LiteralPath $path)) { throw "Required offline input missing: $path" } }
 
 $sourceNames = @(
-    'EleanorV040Probe.cs', 'EleanorModBootstrap.cs', 'NativeModRunLoop.cs', 'NativeModProgression.cs', 'NativeSecondBattle.cs', 'ApplyNativeRunLoopOverlay.ps1', 'HarmonyPatchMetadataProbe.cs',
+    'EleanorV040Probe.cs', 'ManaShieldBoundaryProbe.cs', 'EleanorModBootstrap.cs', 'NativeModRunLoop.cs', 'NativeModProgression.cs', 'NativeSecondBattle.cs', 'NativeCombatDecision.cs', 'ApplyNativeRunLoopOverlay.ps1', 'HarmonyPatchMetadataProbe.cs',
     'VanillaCombatRootAdapter.cs', 'VanillaGameActionProbe.cs',
     'ApplyCombatSolverNoPatchCardMirrorOverlay.ps1', 'ApplyCombatSolverNoPatchCardResultLocationOverlay.ps1',
     'ApplyCombatSolverNoPatchPowerHookOverlay.ps1', 'ApplyCombatSolverNoPatchPowerTurnStartOverlay.ps1',
     'AdaptedRelicBeforeHandDrawMirrors.cs', 'ApplyCombatSolverRelicTurnStartOverlay.ps1', 'run-v041-victory-replay.ps1',
     'run-v0111-eleanor-v040.ps1'
 )
+$sourceNames += @('StageOneProbe.cs','ApplyStageOneHarnessOverlay.ps1','VanillaBattleReplayProbe.cs','VanillaRandomTargetProbe.cs','NativeRunLoopProbe.cs')
 $sourcePaths = @($sourceNames | ForEach-Object { Join-Path $PSScriptRoot $_ })
+$sourcePaths += @(Get-ChildItem -LiteralPath (Join-Path $labRoot 'src/SimulatorLab.Core') -Filter '*.cs' -File | Sort-Object Name | ForEach-Object FullName)
 $revisionInput = (($sourcePaths | ForEach-Object { (Get-FileHash -Algorithm SHA256 -LiteralPath $_).Hash }) -join '')
 $revision = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($revisionInput))).Substring(0, 12).ToLowerInvariant()
 $cacheRoot = Join-Path $labRoot ".build\local-reference\CombatSolver-v040-$revision"
@@ -130,11 +133,12 @@ $overlayFiles = @(Get-ChildItem -LiteralPath (Join-Path $cacheRoot 'src') -Recur
 [IO.File]::WriteAllText($overlayLock,([ordered]@{revision=$revision;files=$overlayFiles} | ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
 }
 $harnessRoot = Join-Path $cacheRoot 'tools\search\OfflineSearchHarness'
-foreach ($name in @('EleanorV040Probe.cs', 'EleanorModBootstrap.cs', 'NativeModRunLoop.cs', 'NativeModProgression.cs', 'NativeSecondBattle.cs', 'HarmonyPatchMetadataProbe.cs', 'VanillaCombatRootAdapter.cs', 'VanillaGameActionProbe.cs')) {
+foreach ($name in @('EleanorV040Probe.cs', 'ManaShieldBoundaryProbe.cs', 'EleanorModBootstrap.cs', 'NativeModRunLoop.cs', 'NativeModProgression.cs', 'NativeSecondBattle.cs', 'NativeCombatDecision.cs', 'HarmonyPatchMetadataProbe.cs', 'VanillaCombatRootAdapter.cs', 'VanillaGameActionProbe.cs')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $harnessRoot $name) -Force
 }
 
 $programPath = Join-Path $harnessRoot 'Program.cs'
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'StageOneProbe.cs') -Destination (Join-Path $harnessRoot 'StageOneProbe.cs') -Force
 $program = [IO.File]::ReadAllText($programPath, [Text.Encoding]::UTF8)
 $loadMarker = 'if (Environment.GetEnvironmentVariable("SIMULATORLAB_ELEANOR_MOD") == "1")'
 $loadAnchor = 'Step(steps, "M0.2'
@@ -235,10 +239,12 @@ $commonProperties = @(
 if ($NativeLoopStage) {
     & (Join-Path $PSScriptRoot 'ApplyNativeRunLoopOverlay.ps1') -HarnessRoot $harnessRoot
 }
+& (Join-Path $PSScriptRoot 'ApplyStageOneHarnessOverlay.ps1') -HarnessRoot $harnessRoot
 & dotnet build $solverProject --configuration Release --verbosity minimal @commonProperties "-p:MemoryCleanerProject=$stubProject"
 if ($LASTEXITCODE -ne 0) { throw "CombatSolver build failed ($LASTEXITCODE)." }
 & dotnet build $harnessProject --configuration Release --verbosity minimal @commonProperties "-p:CombatSolverRepositoryRoot=$cacheRoot" "-p:CombatSolverDll=$solverDll"
 if ($LASTEXITCODE -ne 0) { throw "Offline harness build failed ($LASTEXITCODE)." }
+if ($BuildOnly) { Write-Output "Build only: harness=$harnessRoot"; exit 0 }
 
 $runId = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss-fff')
 $runRoot = Join-Path $labRoot ".build\runs\eleanor-$runTag-$runId"

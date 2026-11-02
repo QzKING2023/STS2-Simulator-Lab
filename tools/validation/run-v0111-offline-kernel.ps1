@@ -111,12 +111,23 @@ $cachedSolverVersion = [xml](Get-Content -LiteralPath $solverProject -Raw)
 if (($cachedSolverVersion.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1) -ne '0.50.1') {
     throw 'The ignored local build copy is not CombatSolver version 0.50.1.'
 }
+$overlayLock = Join-Path $cacheRoot 'lab-overlay-lock.json'
+if (Test-Path -LiteralPath $overlayLock) {
+    $overlayInputs = Get-Content -LiteralPath $overlayLock -Raw | ConvertFrom-Json
+    if ($overlayInputs.revision -ne $probeRevision) { throw 'Cached overlay revision mismatch.' }
+    foreach ($file in $overlayInputs.files) {
+        if ((Get-FileHash -LiteralPath (Join-Path $cacheRoot $file.path) -Algorithm SHA256).Hash -ne $file.sha256) { throw "Cached overlay changed: $($file.path)" }
+    }
+} else {
 $noPatchOverlay = Join-Path $PSScriptRoot 'ApplyCombatSolverNoPatchCardMirrorOverlay.ps1'
 & $noPatchOverlay -TargetFile (Join-Path $cacheRoot 'src\Prediction\AdaptedCardOnPlayMirrors.cs')
 $relicTurnStartOverlay = Join-Path $PSScriptRoot 'ApplyCombatSolverRelicTurnStartOverlay.ps1'
 & $relicTurnStartOverlay -SourceRoot (Join-Path $cacheRoot 'src') `
     -AdapterSource (Join-Path $PSScriptRoot 'AdaptedRelicBeforeHandDrawMirrors.cs')
 
+$overlayFiles = @(Get-ChildItem -LiteralPath (Join-Path $cacheRoot 'src') -Recurse -Filter '*.cs' -File | ForEach-Object { [ordered]@{path=[IO.Path]::GetRelativePath($cacheRoot,$_.FullName);sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash} })
+[IO.File]::WriteAllText($overlayLock,([ordered]@{revision=$probeRevision;files=$overlayFiles} | ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
+}
 $harnessSourceRoot = Join-Path $cacheRoot 'tools\search\OfflineSearchHarness'
 $forkProbe = Join-Path $harnessSourceRoot 'ForkIsolationChecks.cs'
 $forkProbeSource = Join-Path $PSScriptRoot 'ForkIsolationChecks.cs'

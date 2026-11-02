@@ -35,25 +35,38 @@ internal static partial class NativeModRunLoop
     public static object? RecordingFixture { get; set; }
     private static object? RewardCardSupport;
     private static RunProgressStateV1? Protocol;
+    private static string? _sourceSeed;
+    public static string SourceSeed => _sourceSeed ?? throw new InvalidOperationException("Native scenario seed has not been bound.");
+    public static void BindScenarioSeed(string seed)
+    {
+        if (string.IsNullOrWhiteSpace(seed) || (_sourceSeed != null && _sourceSeed != seed))
+            throw new InvalidOperationException("Native scenario seed changed within this process.");
+        _sourceSeed = seed;
+    }
 
     public static object RunLoop(CombatState combat, MainLoopContext loop, string output, object route, HarnessOptions options)
     {
+        NativeCombatDecision.Ticket? stageTicket = null;
+        List<object> ticketChecks = [];
         var player = LocalContext.GetMe(combat)!;
         var run = (RunState)combat.RunState;
         string policy = Environment.GetEnvironmentVariable("SIMULATORLAB_NATIVE_REWARD_POLICY") ?? "skip";
         object Report(string status, string? reason = null)
         {
-            var report = new { schema = "eleanor-native-run-loop/v1", status, reason, phase = Phase, policy,
+            var report = new { schema = "eleanor-native-run-loop/v1", status, reason, phase = Phase, policy, sourceSeed=SourceSeed,
+                outcome=Outcome(status,reason),confirmedActionsScope="sum of confirmed first-battle and second-battle replay actions; reward/travel/setup excluded",
                 modHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(Environment.GetEnvironmentVariable("SIMULATORLAB_ELEANOR_MOD_DLL")!))),
                 pool = PoolPreflight(), battle = BattleEvidence, rewards = RewardEvidence, lifecycle = Lifecycle,
                 nextBoundary = NextBoundary, secondBattle=SecondBattle, protocol=Protocol, recordingFixture=RecordingFixture, rewardCardSupport=RewardCardSupport, semantics = "native reward execution + protocol legality + simulator combat handoffs; no independent reward predictor",
-                offlineGuards=EleanorV040Probe.CaptureOfflineWriteEvidence(), persistentWritesAllowed = false };
+                offlineGuards=EleanorV040Probe.CaptureOfflineWriteEvidence(), stageOneTicketChecks=ticketChecks, persistentWritesAllowed = false };
             File.WriteAllText(Path.Combine(output,"native-run-loop.json"), JsonSerializer.Serialize(report,Json));
             return report;
         }
         try
         {
             Phase = "first-battle";
+            if(Environment.GetEnvironmentVariable("SIMULATORLAB_STAGE_ONE_TICKETS")=="1")
+                stageTicket=NativeCombatDecision.Query(combat,loop,options,Path.Combine(output,"first-boundary-ticket"));
             Observe("first-player-boundary", player, run);
             string battleDir = Path.Combine(output,"battle"); Directory.CreateDirectory(battleDir);
             string planPath = Path.Combine(battleDir,"route.json");
@@ -70,11 +83,12 @@ internal static partial class NativeModRunLoop
             else File.WriteAllText(planPath, JsonSerializer.Serialize(route,routeJson));
             File.WriteAllText(Path.Combine(battleDir,"harness-result.json"),JsonSerializer.Serialize(new {
                 eleanorMod = new { assemblySha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(Environment.GetEnvironmentVariable("SIMULATORLAB_ELEANOR_MOD_DLL")!))) },
-                scenario = new { CharacterId = "MyMod", EncounterId = ((CombatRoom)run.CurrentRoom!).Encounter.Id.Entry, Seed = "LAB_V0111_ELEANOR_V040_FORM_01" }
+                scenario = new { CharacterId = "MyMod", EncounterId = ((CombatRoom)run.CurrentRoom!).Encounter.Id.Entry, Seed = SourceSeed }
             },Json));
             BattleEvidence = EleanorV040Probe.RunVictoryReplay(combat,loop,battleDir,planPath);
             string battleStatus = JsonSerializer.SerializeToElement(BattleEvidence,Json).GetProperty("status").GetString()!;
             if (battleStatus != "passed") return Report(battleStatus, "Native map battle replay did not complete exactly.");
+            if(stageTicket!=null) VerifyTicketRejected(combat,"terminated-combat");
             var room = (CombatRoom)run.CurrentRoom!;
             Phase = "post-combat-cleanup";
             Observe(Phase,player,run);
@@ -104,8 +118,12 @@ internal static partial class NativeModRunLoop
                         await RunManager.Instance.RewardsSetSynchronizer.SelectLocalReward(set.Rewards.OfType<CardReward>().Single());
                     else if (policy!="skip") throw new InvalidOperationException("Unknown reward policy.");
                     selectedRewards=set.Rewards.Select((r,i)=>(r,i)).Where(x=>x.r.SuccessfullySelected).Select(x=>offers[x.i].RewardId).ToList();
-                    RunManager.Instance.RewardsSetSynchronizer.SkipLocalRewardsSet();
+                    bool completedBeforeSkip=RunManager.Instance.RewardsSetSynchronizer.IsRewardsSetCompleted(set);
+                    if(!completedBeforeSkip)RunManager.Instance.RewardsSetSynchronizer.SkipLocalRewardsSet();
+                    if(!RunManager.Instance.RewardsSetSynchronizer.IsRewardsSetCompleted(set))
+                        throw new InvalidOperationException("Native reward synchronization did not complete.");
                     RewardEvidence = new { offerCount, offered, selectedCard=choice.Selected?.Id.ToString(),
+                        completedBeforeSkip,skipCommandIssued=!completedBeforeSkip,
                         offeredCards=choice.Options, goldBefore, goldAfter=player.Gold,
                         history=JsonSerializer.SerializeToElement(run.CurrentMapPointHistoryEntry,Json) };
                 };
@@ -157,7 +175,8 @@ internal static partial class NativeModRunLoop
             if(SecondBattleEnabled)
             {
                 Phase="second-battle";
-                SecondBattle=RunSecondBattle(nextCombat,loop,output,acquired,options);
+            if(stageTicket!=null) VerifyTicketRejected(nextCombat,"cross-combat");
+            SecondBattle=RunSecondBattle(nextCombat,loop,output,acquired,options);
                 var result=JsonSerializer.SerializeToElement(SecondBattle,Json);
                 if(result.GetProperty("status").GetString()!="passed")return Report(result.GetProperty("status").GetString()!,result.GetProperty("reason").GetString());
                 Phase="second-post-combat-cleanup";Observe(Phase,player,run);VerifyReset(player);
@@ -167,7 +186,34 @@ internal static partial class NativeModRunLoop
             return Report("passed");
         }
         catch (PredictionUnsupportedException ex) { return Report("unsupported",ex.ToString()); }
-        catch (Exception ex) { return Report("failed",ex.ToString()); }
+        catch (ValidationStopException ex) { return Report(ValidationOutcomeV1.StatusForStop(ex.Reason),ex.Code+": "+ex.Message); }
+        catch (Exception ex) { return Report("engine-error",ex.ToString()); }
+        ValidationOutcomeV1 Outcome(string status,string? reason)
+        {
+            int count=0;
+            foreach(var part in new[]{BattleEvidence,SecondBattle})
+                if(part!=null && JsonSerializer.SerializeToElement(part,Json).TryGetProperty("outcome",out var value))
+                    count+=JsonSerializer.Deserialize<ValidationOutcomeV1>(value.GetRawText(),new JsonSerializerOptions{PropertyNameCaseInsensitive=true})!.ConfirmedActions;
+            object? leaf=SecondBattle??(Phase=="first-battle"?BattleEvidence:null);
+            if(leaf!=null){var json=JsonSerializer.SerializeToElement(leaf,Json);if(json.GetProperty("status").GetString()==status && json.TryGetProperty("outcome",out var value))
+                return JsonSerializer.Deserialize<ValidationOutcomeV1>(value.GetRawText(),new JsonSerializerOptions{PropertyNameCaseInsensitive=true})! with {CaseId="native-run-loop",ConfirmedActions=count};}
+            if(status=="passed" && NextBoundary!=null)
+                return new ValidationOutcomeV1 {CaseId="native-run-loop",ReasonCode="next-first-player-boundary",ConfirmedActions=count,
+                    NativeOutcome=NativeOutcome.Ongoing,SimulatorOutcome=NativeOutcome.Ongoing,Comparison=ComparisonOutcome.Exact,
+                    Coverage=CoverageOutcome.Complete,StopReason=ValidationStop.NoCandidate,VerificationPassed=true,ExecutionState="AtBoundary"};
+            return ValidationOutcomeV1.FromStatus("native-run-loop",status,reason,count) with {ExecutionState=status=="engine-error"?"OutcomeUncertain":"AtBoundary"};
+        }
+        void VerifyTicketRejected(CombatState current,string label)
+        {
+            string before=ContinuationStamp.CaptureLive(current).StateText;
+            try{_=stageTicket!.Consume(current);throw new InvalidOperationException("Obsolete ticket accepted: "+label);}
+            catch(ValidationStopException ex) when(ex.Reason==ValidationStop.InvalidAction)
+            {
+                bool unchanged=before==ContinuationStamp.CaptureLive(current).StateText;
+                if(!unchanged)throw new InvalidOperationException("Obsolete ticket rejection mutated native state.");
+                ticketChecks.Add(new{label,ex.Code,nativeContinuationUnchanged=unchanged});
+            }
+        }
     }
 
     private static object ManaState(Player player)

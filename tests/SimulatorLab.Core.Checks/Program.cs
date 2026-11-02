@@ -243,5 +243,52 @@ Check("legal child entry completes minimum run loop", progress.Phase == RunProgr
     && progress.CurrentNodeId == "0,1" && progress.EnteredNodeId == "0,1");
 Check("reward choice lists remain detached across transitions", progressRoot.Rewards[1].ChoiceIds.SequenceEqual(["STRIKE", "DEFEND"]));
 
+var deathResult = new ValidationOutcomeV1 { CaseId="death", ReasonCode="native-pending-loss", NativeOutcome=NativeOutcome.Death,
+    SimulatorOutcome=NativeOutcome.Death, Comparison=ComparisonOutcome.Exact, Coverage=CoverageOutcome.Complete,
+    StopReason=ValidationStop.Completed, VerificationPassed=true };
+Check("matched actual death is valid independently of victory", deathResult.Validate().Count==0);
+Check("predicted death is not actual death", (deathResult with {NativeOutcome=NativeOutcome.Unknown}).Validate().Count>0);
+Check("mismatch cannot become a successful verification", (deathResult with {Comparison=ComparisonOutcome.Mismatch}).Validate().Count>0);
+Check("exact prefix cannot complete unsupported coverage", (deathResult with {Coverage=CoverageOutcome.Unsupported}).Validate().Count>0);
+Check("unsupported requires a coverage gap", (deathResult with {StopReason=ValidationStop.Unsupported}).Validate().Count>0);
+foreach(var reason in Enum.GetValues<ValidationStop>())
+{
+    var value=new ValidationOutcomeV1 {CaseId="reason-contract",ReasonCode=reason.ToString(),StopReason=reason,
+        Coverage=reason==ValidationStop.Unsupported?CoverageOutcome.Unsupported:CoverageOutcome.NotRun,
+        Comparison=reason==ValidationStop.DifferentialMismatch?ComparisonOutcome.Mismatch:ComparisonOutcome.NotCompared};
+    var roundtrip=JsonSerializer.Deserialize<ValidationOutcomeV1>(JsonSerializer.Serialize(value))!;
+    Check($"outcome classification preserves {reason}",roundtrip.StopReason==reason);
+}
+Check("decision budget stops before another query",new DecisionBounds(1).Reached(1,1,0)=="decision-limit");
+Check("turn budget stops after declared turn",new DecisionBounds(MaxTurns:1).Reached(0,2,0)=="turn-limit");
+Check("elapsed boundary is inclusive",new DecisionBounds(ElapsedSeconds:1).Reached(0,1,1)=="elapsed-limit");
+Check("elapsed boundary permits earlier query",new DecisionBounds(ElapsedSeconds:1).Reached(0,1,0.99)==null);
+Check("independent shield base has five block without mana",EleanorV041Contracts.ManaShield(false,0)==(1,0,5));
+Check("independent shield upgraded has thirteen block with mana",EleanorV041Contracts.ManaShield(true,2)==(1,1,13));
+Check("independent contract rejects shared wrong observed block",EleanorV041Contracts.ManaShield(true,1).Block!=12);
+Check("budget with no candidate retains budget reason",QueryDisposition.Stop(false,true,0)==ValidationStop.BudgetExceeded);
+Check("empty result without budget is not unsupported",QueryDisposition.Stop(false,false,0)==ValidationStop.NoCandidate);
+Check("known gap remains unsupported",QueryDisposition.Stop(true,false,0)==ValidationStop.Unsupported);
+Check("candidate can proceed without a stop",QueryDisposition.Stop(false,false,1)==null);
+foreach(var reason in Enum.GetValues<ValidationStop>().Where(r=>r!=ValidationStop.Completed))
+    Check($"typed stop survives outer status mapping: {reason}",ValidationOutcomeV1.FromStatus("mapping",ValidationOutcomeV1.StatusForStop(reason)).StopReason==reason);
+var confirmedStep=JsonSerializer.SerializeToElement(new {nativeAccepted=true,simulatedAccepted=true,exactStateMatch=true,parentBranchUnchanged=true,nativeContinuation="same",simulatorContinuation="same"});
+JsonElement BoundaryFixture(string status="boundary",int count=1) => JsonSerializer.SerializeToElement(new {status,stopReason="controlled fixture",steps=Enumerable.Repeat(confirmedStep,count),
+    outcome=new ValidationOutcomeV1 {CaseId="fixture",ReasonCode=status,NativeOutcome=status=="passed"?NativeOutcome.Victory:NativeOutcome.Ongoing,SimulatorOutcome=status=="passed"?NativeOutcome.Victory:NativeOutcome.Ongoing,
+        Comparison=status=="differential-mismatch"?ComparisonOutcome.Mismatch:ComparisonOutcome.Exact,Coverage=status=="unsupported"?CoverageOutcome.Unsupported:CoverageOutcome.Complete,StopReason=ValidationOutcomeV1.FromStatus("fixture",status).StopReason,
+        VerificationPassed=status is "boundary" or "passed",ConfirmedActions=count}});
+ReplayVerification.RequireBoundary(BoundaryFixture(),1);
+Check("real boundary gate accepts one confirmed step",true);
+foreach(var bad in new[]{BoundaryFixture("boundary",0),BoundaryFixture("engine-error"),BoundaryFixture("unsupported"),BoundaryFixture("invalid-action"),BoundaryFixture("differential-mismatch")})
+{
+    bool rejected=false;try{ReplayVerification.RequireBoundary(bad,1);}catch(ValidationStopException ex){rejected=ex.Reason==(bad.GetProperty("status").GetString()=="boundary"?ValidationStop.DifferentialMismatch:ReplayVerification.Outcome(bad).StopReason);}
+    Check("boundary gate rejects empty or failed inner replay: "+bad.GetProperty("status").GetString(),rejected);
+}
+var nine=Enumerable.Repeat(BoundaryFixture(),9).ToArray();
+Check("aggregate keeps nine confirmed actions",ReplayVerification.Aggregate("second-battle",nine,"budget-exceeded","decision-limit").ConfirmedActions==9);
+var interruptedPrefix=ReplayVerification.Aggregate("second-battle",nine.Take(2).ToArray(),"engine-error","injected query fault");
+Check("query failure retains two confirmed actions and uncertain current states",interruptedPrefix.ConfirmedActions==2&&interruptedPrefix.NativeOutcome==NativeOutcome.Unknown&&interruptedPrefix.SimulatorOutcome==NativeOutcome.Unknown&&interruptedPrefix.ExecutionState=="OutcomeUncertain");
+var lastVictory=BoundaryFixture("passed");
+Check("last chunk does not replace cumulative action count",ReplayVerification.Aggregate("second-battle",nine.Take(8).Append(lastVictory).ToArray(),"passed",null).ConfirmedActions==9);
 Console.WriteLine($"PASS all {checks} contract checks");
 return 0;

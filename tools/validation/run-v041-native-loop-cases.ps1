@@ -4,7 +4,7 @@ $labRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $harness=[IO.Path]::GetFullPath($HarnessRoot)
 if (-not $harness.StartsWith((Join-Path $labRoot '.build\local-reference')+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) { throw 'Harness must be an isolated Lab build.' }
 $dll=Join-Path $harness 'bin\Release\net9.0\OfflineSearchHarness.dll'
-foreach ($name in @('EleanorV040Probe.cs','EleanorModBootstrap.cs','NativeModRunLoop.cs','NativeModProgression.cs','NativeSecondBattle.cs')) {
+foreach ($name in @('EleanorV040Probe.cs','EleanorModBootstrap.cs','NativeModRunLoop.cs','NativeModProgression.cs','NativeSecondBattle.cs','NativeCombatDecision.cs')) {
     if ((Get-FileHash (Join-Path $harness $name)).Hash -ne (Get-FileHash (Join-Path $PSScriptRoot $name)).Hash) { throw "Harness source stale: $name; build a fresh cache." }
     if (-not $ReviewOnly -and (Get-Item (Join-Path $harness $name)).LastWriteTimeUtc -gt (Get-Item $dll).LastWriteTimeUtc) { throw 'Harness DLL predates its source.' }
 }
@@ -25,7 +25,7 @@ $savedSummary=if($ReviewOnly){Get-Content (Join-Path $OutputDirectory 'repeat-su
 $variables=@{
 SIMULATORLAB_ELEANOR_MOD='1';SIMULATORLAB_ELEANOR_MOD_DLL=(Join-Path $pin 'MyMod.dll');SIMULATORLAB_ELEANOR_BASELIB_DLL=(Join-Path $pin 'dependencies\BaseLib.dll');
 SIMULATORLAB_ELEANOR_MANIFEST=(Join-Path $pin 'MyMod.json');SIMULATORLAB_ELEANOR_MOD_VERSION='v0.4.1-forms-cardpool.fix';
-SIMULATORLAB_ELEANOR_V040_PROBE='1';SIMULATORLAB_ELEANOR_V040_FORM='Reverse';SIMULATORLAB_NATIVE_PROFILE=$profile;SIMULATORLAB_NATIVE_LOOP_STAGE='Loop';SIMULATORLAB_NATIVE_REWARD_POLICY='skip';SIMULATORLAB_NATIVE_RECORD_FIXTURE='0';SIMULATORLAB_NATIVE_FIXED_PLAN='';SIMULATORLAB_NATIVE_FIXED_PLAN_SHA=''
+SIMULATORLAB_ELEANOR_V040_PROBE='1';SIMULATORLAB_ELEANOR_V040_FORM='Reverse';SIMULATORLAB_NATIVE_PROFILE=$profile;SIMULATORLAB_NATIVE_LOOP_STAGE='Loop';SIMULATORLAB_NATIVE_REWARD_POLICY='skip';SIMULATORLAB_NATIVE_DECISION_MODE='coverage-plan';SIMULATORLAB_NATIVE_RECORD_FIXTURE='0';SIMULATORLAB_NATIVE_FIXED_PLAN='';SIMULATORLAB_NATIVE_FIXED_PLAN_SHA=''
 SIMULATORLAB_NATIVE_SECOND_BATTLE= $(if($SecondBattle){'1'}else{'0'});SIMULATORLAB_NATIVE_SECOND_PLAN='';SIMULATORLAB_NATIVE_SECOND_PLAN_SHA=''
 }
 $previous=@{}; foreach($name in $variables.Keys){$previous[$name]=[Environment]::GetEnvironmentVariable($name);[Environment]::SetEnvironmentVariable($name,$variables[$name])}

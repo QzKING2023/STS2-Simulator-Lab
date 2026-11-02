@@ -18,7 +18,9 @@ namespace OfflineSearchHarness;
 /// <summary>
 /// Maps both the live v0.111.0 game root and CombatSolver's predicted root into the Lab's
 /// versioned CombatRootV1. Card identity is tied to the native CardModel reference captured at
-/// the opening root. The full reviewed continuation serialization is kept as a strict state
+/// the opening root. Independently created native/shadow cards use separate, stable ordered
+/// first-observation ordinals in each world; they do not share object references.
+/// The full reviewed continuation serialization is kept as a strict state
 /// extension so dynamic/private vanilla state remains part of the comparison.
 /// </summary>
 internal sealed class VanillaCombatRootAdapter
@@ -29,6 +31,8 @@ internal sealed class VanillaCombatRootAdapter
     private readonly Dictionary<CardModel, string> _cardIds = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Creature, string> _creatureIds = new(ReferenceEqualityComparer.Instance);
     private int _nextCardId;
+    private readonly Dictionary<CardModel, string> _nativeGeneratedIds = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<CardModel, string> _predictedGeneratedIds = new(ReferenceEqualityComparer.Instance);
 
     public VanillaCombatRootAdapter(CombatState initial, string scenarioId)
     {
@@ -48,11 +52,26 @@ internal sealed class VanillaCombatRootAdapter
         foreach (Creature creature in initial.Creatures)
             _ = CreatureId(creature);
         foreach (CardModel card in player.PlayerCombatState!.AllCards)
-            _ = CardId(card);
+            _cardIds.Add(card, $"card:{_nextCardId++:D3}:{card.Id.Entry}");
     }
 
     public string ScenarioId { get; }
     public string CombatId { get; private set; } = "";
+
+    public PredictedCard ResolvePredictedHandCard(CardModel nativeCard, SimPlayerCombatState predicted)
+    {
+        // Called only after the complete ordered roots/continuations matched. Resolve an
+        // independently generated object by its already-observed identity, never by model alone.
+        if (!_cardIds.TryGetValue(nativeCard, out string? id) && !_nativeGeneratedIds.TryGetValue(nativeCard, out id))
+            throw new PredictionUnsupportedException("Native action card has no observed root identity.");
+        var matches = predicted.Hand.Cards.Where(card =>
+            (_cardIds.TryGetValue(card.Original, out string? initial) && initial == id)
+            || (_predictedGeneratedIds.TryGetValue(card.Original, out string? generated) && generated == id)).ToArray();
+        if (matches.Length != 1 || matches[0].Preview.Id != nativeCard.Id
+            || !ReferenceEquals(matches[0].Preview.Owner, nativeCard.Owner))
+            throw new PredictionUnsupportedException("Generated action card has no unique matching observed hand identity.");
+        return matches[0];
+    }
 
     public CombatRootV1 CaptureLive(CombatState state, bool terminalVictory = false, bool terminalDefeat = false)
     {
@@ -141,7 +160,7 @@ internal sealed class VanillaCombatRootAdapter
             playerState.OrbQueue.Capacity,
             cardPiles,
             rng: CapturePredictedRng(simulator.Rng),
-            stateText);
+            stateText, predicted: true);
     }
 
     private CombatRootV1 BuildRoot(
@@ -163,7 +182,7 @@ internal sealed class VanillaCombatRootAdapter
         int orbCapacity,
         IReadOnlyDictionary<PileKind, IReadOnlyList<CardView>> cardPiles,
         List<RandomStreamCheckpointV1> rng,
-        string stateText)
+        string stateText, bool predicted = false)
     {
         CombatId = string.IsNullOrEmpty(CombatId) ? combatId : CombatId;
         if (!StringComparer.Ordinal.Equals(CombatId, combatId))
@@ -173,11 +192,11 @@ internal sealed class VanillaCombatRootAdapter
         List<CardPileStateV1> piles = pileKinds.Select(kind => new CardPileStateV1
         {
             Kind = kind,
-            CardInstanceIds = cardPiles[kind].Select(card => CardId(card.Identity)).ToList(),
+            CardInstanceIds = cardPiles[kind].Select(card => CardId(card.Identity, predicted)).ToList(),
         }).ToList();
         Dictionary<string, CardModel> cardsById = new(StringComparer.Ordinal);
         foreach (CardView card in cardPiles.Values.SelectMany(cards => cards))
-            cardsById.TryAdd(CardId(card.Identity), card.State);
+            cardsById.TryAdd(CardId(card.Identity, predicted), card.State);
         List<CardInstanceStateV1> cards = cardsById.Select(pair => CardState(pair.Key, pair.Value)).ToList();
 
         string playerId = CreatureId(player.Creature);
@@ -284,12 +303,14 @@ internal sealed class VanillaCombatRootAdapter
         return result;
     }
 
-    private string CardId(CardModel card)
+    private string CardId(CardModel card, bool predicted)
     {
         if (_cardIds.TryGetValue(card, out string? id))
             return id;
-        id = $"card:{_nextCardId++:D3}:{card.Id.Entry}";
-        _cardIds.Add(card, id);
+        var generated = predicted ? _predictedGeneratedIds : _nativeGeneratedIds;
+        if (generated.TryGetValue(card, out id)) return id;
+        id = $"card:{_nextCardId + generated.Count:D3}:{card.Id.Entry}";
+        generated.Add(card, id);
         return id;
     }
 

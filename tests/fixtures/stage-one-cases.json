@@ -1,0 +1,22 @@
+{
+  "schema": "stage-one-cases/v1",
+  "gameVersion": "v0.111.0",
+  "modVersion": "v0.4.1-forms-cardpool.fix",
+  "repeats": 2,
+  "cases": [
+    {"id":"enemy-death","kind":"native-api-fixture","expectedExit":0,"nodes":1000},
+    {"id":"upkeep-death","kind":"native-api-fixture","expectedExit":0,"nodes":1000},
+    {"id":"enemy-victory","kind":"native-api-fixture","expectedExit":0,"nodes":1000},
+    {"id":"ticket-stale","kind":"native-rejection","expectedExit":0,"nodes":1000},
+    {"id":"ticket-duplicate","kind":"native-rejection","expectedExit":0,"nodes":1000},
+    {"id":"decision-budget","kind":"native-controller-budget","expectedExit":0,"nodes":1000},
+    {"id":"turn-budget","kind":"native-controller-budget","expectedExit":0,"nodes":1000},
+    {"id":"invalid-card","kind":"native-rejection","expectedExit":0,"nodes":1000},
+    {"id":"invalid-target","kind":"native-rejection","expectedExit":0,"nodes":1000},
+    {"id":"invalid-turn","kind":"native-rejection","expectedExit":0,"nodes":1000},
+    {"id":"budget-query","kind":"actual-solver-budget","expectedExit":0,"nodes":100},
+    {"id":"engine-error-control","kind":"injected-fault","expectedExit":1,"nodes":1000}
+  ],
+  "knownUnsupported": ["seed2-take:ReturnFlow", "seed3-take:ManaConversionPrinciple"],
+  "semantics": "Repeated cases establish reproducibility, not independent statistical samples. Controls are not native bug coverage."
+}

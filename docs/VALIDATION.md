@@ -1,5 +1,7 @@
 # Validation setup
 
+Stage 1's historical evidence and acceptance matrix are in [STAGE_1_VALIDATION.md](STAGE_1_VALIDATION.md); the mandatory independent-review repairs and replacement artifact are in [STAGE_1_REVIEW_REPAIRS.md](STAGE_1_REVIEW_REPAIRS.md). `run-stage-one.ps1` consumes a frozen manifest, fresh output directory and the retained sixteen-action plan; `TestStageOneEvidence.ps1` reviews its artifacts. Intermediate summaries have `completed=false`. Batch exit 2 is reserved for declared unsupported paths; incomplete budget/cancel/environment/no-candidate outcomes use exit 3, execution/verification failures exit 1, verified complete outcomes exit 0. Expected fault controls keep their original child exit 1.
+
 Use .NET 9 and PowerShell 7. Protocol-only checks need no game inputs:
 
 ~~~powershell
@@ -63,3 +65,15 @@ pwsh -NoProfile -File tools/validation/TestEleanorVictoryReplayEvidence.ps1 -Rep
 Outputs stay under ignored .build/runs. Each case contains native-run-loop.json and battle/eleanor-v041-fixed-route-victory-replay.json, with roots, raw continuations, lifecycle/RNG snapshots and terminal events. repeat-summary.json records per-process exit/status and the 24 milestone checks.
 
 Exit 0 confirms the required cases passed. Nonzero exits and explicit unsupported/not-run states must be retained. No retail executable/UI, deployment, actual save or Steam Cloud interaction is part of the validation workflow.
+
+## Bounded boundary, batch and decision stages
+
+Build the current native-loop harness with `-NativeLoopStage Pool`, then use the printed directory with:
+
+~~~powershell
+pwsh -NoProfile -File tools/validation/run-extended-validation.ps1 -HarnessRoot <harness-directory> -Stage ShieldMatrix
+pwsh -NoProfile -File tools/validation/run-fixed-strategy-batch.ps1 -HarnessRoot <harness-directory>
+pwsh -NoProfile -File tools/validation/run-online-decision-cases.ps1 -HarnessRoot <harness-directory>
+~~~
+
+Run these serially. The batch has three preregistered seeds, two policies and two repeats; exit 2 records explicit unsupported paths. `-ReplayPlansFrom <earlier-cohort-directory>` preserves declared seeds/policies and reuses emitted plans to target earlier failures. The online cases compare independent one-action replanning with a separately labelled frozen replay. See [EXTENDED_VALIDATION.md](EXTENDED_VALIDATION.md) for bounds, results and limitations.

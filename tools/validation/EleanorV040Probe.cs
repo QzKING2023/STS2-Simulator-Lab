@@ -35,7 +35,7 @@ using SimulatorLab.Core;
 namespace OfflineSearchHarness;
 
 /// <summary>Version-specific Lab adapter for the locked Eleanor v0.4.0 forms/echo binary.</summary>
-internal static class EleanorV040Probe
+internal static partial class EleanorV040Probe
 {
     private const string PatchOwner = "simulatorlab.eleanor-v040.registration-probe";
     private static readonly Harmony PatchProbe = new(PatchOwner);
@@ -64,7 +64,7 @@ internal static class EleanorV040Probe
     private sealed record V040Snapshot(int Mana, string Stance, bool CompleteOrb, int StartDrawBonus, decimal Echo);
     private sealed record PoolFirstDrawPreflight(string status, object poolQuery, object firstDraw, string caveat);
     private sealed record VictoryTerminalCapture(CombatRootV1 Root, string StateText, V040Snapshot Mana,
-        decimal PlayerHp, object[] Enemies, bool VictoryConditionsSatisfied);
+        decimal PlayerHp, object[] Enemies, bool VictoryConditionsSatisfied, bool Defeat = false);
 
     public static void RegisterFromLoadedMod()
     {
@@ -314,7 +314,7 @@ internal static class EleanorV040Probe
             string sourceEncounter = sourceRoot.GetProperty("scenario").GetProperty("EncounterId").GetString() ?? "";
             string sourceSeed = sourceRoot.GetProperty("scenario").GetProperty("Seed").GetString() ?? "";
             string expectedEncounter = NativeModRunLoop.Enabled ? ((CombatRoom)combat.RunState.CurrentRoom!).Encounter.Id.Entry : "FUZZY_WURM_CRAWLER_WEAK";
-            string expectedSeed = "LAB_V0111_ELEANOR_V040_FORM_01";
+            string expectedSeed = NativeModRunLoop.Enabled ? NativeModRunLoop.SourceSeed : "LAB_V0111_ELEANOR_V040_FORM_01";
             if (!StringComparer.OrdinalIgnoreCase.Equals(sourceAssemblySha, currentModSha256)
                 || sourceCharacter != "MyMod" || sourceEncounter != expectedEncounter
                 || sourceSeed != expectedSeed)
@@ -412,7 +412,7 @@ internal static class EleanorV040Probe
             int liveTurn = playerState.TurnNumber;
             if (actionTurn != liveTurn)
             {
-                status = "unsupported";
+                status = "invalid-action";
                 stopReason = $"Fixed plan turn {actionTurn} does not match actual turn {liveTurn} at action {index + 1}.";
                 break;
             }
@@ -451,18 +451,18 @@ internal static class EleanorV040Probe
                     CardModel[] nativeMatches = playerState.Hand.Cards
                         .Where(card => card.Id.Entry == cardId).ToArray();
                     if (cardOccurrence < 0 || cardOccurrence >= nativeMatches.Length)
-                        throw new PredictionUnsupportedException($"Planned card {cardId} occurrence {cardOccurrence} is not in the native hand.");
+                        throw new ValidationStopException(ValidationStop.InvalidAction,"card-not-in-hand",$"Planned card {cardId} occurrence {cardOccurrence} is not in the native hand.");
                     CardModel nativeCard = nativeMatches[cardOccurrence];
                     NativeModRunLoop.VerifySecondRewardCard(nativeCard);
                     PredictedCard predictedCard = branch.State.FindCard(nativeCard)
-                        ?? throw new PredictionUnsupportedException($"Simulator branch cannot resolve the planned {cardId} card instance.");
+                        ?? adapter.ResolvePredictedHandCard(nativeCard, branch.State.GetPlayerCombatState(player));
                     Creature? target = null;
                     if (targetIndex >= 0)
                     {
                         Creature[] livingEnemies = combat.Enemies.Where(enemy => enemy.IsAlive)
                             .Select(enemy => (Creature)enemy).ToArray();
                         if (targetIndex >= livingEnemies.Length)
-                            throw new PredictionUnsupportedException($"Planned target index {targetIndex} is not a living enemy.");
+                            throw new ValidationStopException(ValidationStop.InvalidAction,"target-not-alive",$"Planned target index {targetIndex} is not a living enemy.");
                         target = livingEnemies[targetIndex];
                         targetName = combat.Enemies.First(enemy => ReferenceEquals(enemy, target)).Monster?.Id.Entry
                             ?? target.GetType().Name;
@@ -515,9 +515,9 @@ internal static class EleanorV040Probe
                     object? boundary = advanceRound.Invoke(driver, args);
                     if (!StringComparer.Ordinal.Equals(boundary?.ToString(), "None"))
                         throw new PredictionUnsupportedException($"Simulator stopped at the planned turn boundary: {boundary}.");
-                    branch = _lastTurnStartSimulator
-                        ?? throw new PredictionUnsupportedException("Simulator did not produce the next player-turn branch.");
-                    if (_lastTurnStartNumber != liveTurn + 1 || _lastTurnStartSnapshot is null)
+                    if (branch.TerminalStamp is null) branch = _lastTurnStartSimulator
+                        ?? throw new PredictionUnsupportedException("Simulator did not produce the next player-turn branch or terminal stamp.");
+                    if (branch.TerminalStamp is null && (_lastTurnStartNumber != liveTurn + 1 || _lastTurnStartSnapshot is null))
                         throw new PredictionUnsupportedException($"Simulator turn-start callback reached turn {_lastTurnStartNumber}, expected {liveTurn + 1}.");
                     SimulatedCombatState nextShadow = branch.State.CombatState as SimulatedCombatState
                         ?? throw new PredictionUnsupportedException("Next-turn branch omitted SimulatedCombatState.");
@@ -525,18 +525,35 @@ internal static class EleanorV040Probe
                     if (!CombatBeamSolver.SettleReplayActionBoundary(branch, nextShadow))
                         throw new PredictionUnsupportedException("Simulator left an unresolved choice at EndTurn.");
                     shuffleCount = args[4] is int nextShuffleCount ? nextShuffleCount : shuffleCount;
+                    if (branch.TerminalStamp is { } terminal)
+                    {
+                        int terminalTurn = terminal.PlayerTurn;
+                        var terminalMana = GetState(branch, GetBranchOrb(branch, player), opening).Capture();
+                        predictedTerminalRoot = WithExtension(adapter.CapturePredicted(combat, player, branch,
+                            terminalTurn, root.Forecast, root.StartTurnNumber,
+                            terminalVictory: terminal.Outcome == CombatTerminalOutcome.Victory,
+                            terminalDefeat: terminal.Outcome == CombatTerminalOutcome.Defeat), terminalMana, requestedForm);
+                        predictedTerminalText = ContinuationStamp.CapturePredicted(player, branch, terminalTurn,
+                            root.Forecast, root.StartTurnNumber).StateText;
+                    }
                     executionStage = "native-end-turn-enqueue";
                     CombatManager.Instance.OnEndedTurnLocally();
                     RunManager.Instance.ActionQueueSynchronizer.RequestEnqueue(new EndPlayerTurnAction(player, liveTurn));
                     executionStage = "native-enemy-phase-drain";
                     loop.RunUntilCompleted(RunManager.Instance.ActionExecutor.FinishedExecutingActions(), TimeSpan.FromSeconds(45),
                         $"Native fixed-plan EndTurn {liveTurn} including enemy phase");
-                    if (player.PlayerCombatState is not { Phase: PlayerTurnPhase.Play } nextState || nextState.TurnNumber != liveTurn + 1)
+                    if (_victoryTerminalEvidence is null && (player.PlayerCombatState is not { Phase: PlayerTurnPhase.Play } nextState || nextState.TurnNumber != liveTurn + 1))
                         throw new PredictionUnsupportedException("Native EndPlayerTurn did not reach the next player Play boundary.");
                     simulatedAccepted = true;
                     nativeAccepted = true;
                 }
                 else throw new PredictionUnsupportedException($"Unsupported fixed-plan action kind '{kind}'.");
+            }
+            catch (ValidationStopException ex)
+            {
+                status = ValidationOutcomeV1.StatusForStop(ex.Reason);
+                stopReason = ex.Code + ": " + ex.Message;
+                break;
             }
             catch (PredictionUnsupportedException ex)
             {
@@ -546,7 +563,7 @@ internal static class EleanorV040Probe
             }
             catch (Exception ex)
             {
-                status = "failed";
+                status = "engine-error";
                 string liveAfterFailure;
                 try
                 {
@@ -562,13 +579,13 @@ internal static class EleanorV040Probe
             VictoryTerminalCapture? terminalEvidence = _victoryTerminalEvidence;
             int afterTurn = player.PlayerCombatState?.TurnNumber ?? liveTurn;
             V040Snapshot afterNative = terminalEvidence?.Mana ?? CaptureState(_stateType, GetLiveManaState(player));
-            V040Snapshot afterSimulator = kind == "EndTurn" && _lastTurnStartSnapshot is not null
+            V040Snapshot afterSimulator = branch.TerminalStamp is null && kind == "EndTurn" && _lastTurnStartSnapshot is not null
                 ? _lastTurnStartSnapshot
                 : GetState(branch, GetBranchOrb(branch, player), opening).Capture();
             nativeVictory = terminalEvidence is { VictoryConditionsSatisfied: true }
                 && nativeCombatWonEvents == 1 && nativeCombatWonForExpectedRoom && !CombatManager.Instance.IsInProgress;
             simulatorVictory = branch.TerminalStamp?.Outcome == CombatTerminalOutcome.Victory;
-            nativeDeath = (terminalEvidence?.PlayerHp ?? player.Creature.CurrentHp) <= 0;
+            nativeDeath = terminalEvidence is { Defeat: true } && !CombatManager.Instance.IsInProgress;
             simulatorDeath = !branch.State.GetCreature(player.Creature).IsAlive;
             CombatRootV1 afterNativeRoot = terminalEvidence?.Root
                 ?? WithExtension(adapter.CaptureLive(combat, terminalVictory: nativeVictory), afterNative, requestedForm);
@@ -621,6 +638,7 @@ internal static class EleanorV040Probe
                 exactStateMatch = exact,
             });
             currentNativeState = afterNative;
+            NativeCombatDecision.ObserveExecutedAction();
             currentSimulatorState = afterSimulator;
             currentNativeText = afterNativeText;
             currentSimulatorText = afterSimulatorText;
@@ -661,6 +679,7 @@ internal static class EleanorV040Probe
 
         object WriteResult(string resultStatus, int? stopAt, string? reason)
         {
+            bool mismatch = resultStatus == "failed" && (!openingExact || reason?.Contains("diverged",StringComparison.Ordinal)==true || reason?.Contains("Only one",StringComparison.Ordinal)==true);
             var report = new
             {
                 schema = "eleanor-v041-fixed-route-victory-replay/v2",
@@ -670,7 +689,7 @@ internal static class EleanorV040Probe
                 modVersion = Environment.GetEnvironmentVariable("SIMULATORLAB_ELEANOR_MOD_VERSION"),
                 modAssemblySha256 = currentModSha256,
                 selectedForm = Environment.GetEnvironmentVariable("SIMULATORLAB_ELEANOR_V040_FORM"),
-                scenario = new { character = "MyMod", encounter = expectedRoom.Encounter.Id.Entry, seed = "LAB_V0111_ELEANOR_V040_FORM_01" },
+                scenario = new { character = "MyMod", encounter = expectedRoom.Encounter.Id.Entry, seed = NativeModRunLoop.Enabled ? NativeModRunLoop.SourceSeed : "LAB_V0111_ELEANOR_V040_FORM_01" },
                 planPath = planFullPath,
                 planSha256,
                 planActionCount,
@@ -682,12 +701,22 @@ internal static class EleanorV040Probe
                 interceptedProgressSaves = _suppressedProgressSaves,
                 persistentWritesAllowed = false,
                 headlessUiCleanup = new { target = "NHoverTipSet.Clear()", interceptedCalls = _suppressedVictoryHoverClears,
-                    behavior = "skip presentation-only hover-tip removal; native combat actions and EndCombatInternal execute" },
+                    behavior = "presentation-only hover-tip intercept; combat and pending-loss methods are never replaced" },
                 nativeCombatWonEvents,
                 nativeCombatWonForExpectedRoom,
                 nativeCombatStillInProgress = CombatManager.Instance.IsInProgress,
                 nativeVictoryConditionsSatisfied = _victoryTerminalEvidence?.VictoryConditionsSatisfied,
-                terminalCaptureBoundary = "read-only prefix before native EndCombatInternal teardown; CombatWon and action drain must complete",
+                terminalCaptureBoundary = nativeDeath
+                    ? "read-only prefix before native ProcessPendingLoss; CombatEnded and action drain complete; no AfterCombatEnd on this native loss path"
+                    : "read-only prefix before native EndCombatInternal teardown; CombatWon and action drain must complete",
+                outcome = new ValidationOutcomeV1 {
+                    CaseId = "fixed-route", NativeOutcome = nativeVictory ? NativeOutcome.Victory : nativeDeath ? NativeOutcome.Death : resultStatus=="engine-error" ? NativeOutcome.Unknown : NativeOutcome.Ongoing,
+                    SimulatorOutcome = simulatorVictory ? NativeOutcome.Victory : simulatorDeath ? NativeOutcome.Death : resultStatus=="engine-error" ? NativeOutcome.Unknown : NativeOutcome.Ongoing,
+                    Comparison = resultStatus is "passed" or "death" or "boundary" ? ComparisonOutcome.Exact : mismatch ? ComparisonOutcome.Mismatch : ComparisonOutcome.NotCompared,
+                    Coverage = resultStatus == "unsupported" ? CoverageOutcome.Unsupported : resultStatus is "passed" or "death" or "boundary" ? CoverageOutcome.Complete : CoverageOutcome.NotRun,
+                    StopReason = mismatch ? ValidationStop.DifferentialMismatch : ValidationOutcomeV1.FromStatus("fixed-route",resultStatus).StopReason,
+                    ReasonCode = resultStatus, Detail = reason, ConfirmedActions = ReplayVerification.Count([JsonSerializer.SerializeToElement(new {steps=stepReports},ProtocolJson.Options)]), VerificationPassed = resultStatus is "passed" or "death" or "boundary", ExecutionState = nativeVictory || nativeDeath ? "TerminalCaptured" : resultStatus=="engine-error" ? "OutcomeUncertain" : "AtBoundary"
+                },
                 registrationEvidence = RegistrationEvidence,
                 openingExact,
                 nativeOpeningRoot, simulatorOpeningRoot, nativeOpeningContinuation = nativeOpeningText,
@@ -832,12 +861,13 @@ internal static class EleanorV040Probe
         Creature[] initialEnemies = combat.Enemies.ToArray();
         _captureVictoryTerminal = () =>
         {
+            bool defeat = player.Creature.IsDead && CombatManager.Instance.IsAboutToLose;
             bool victoryConditions = initialEnemies.Length > 0 && initialEnemies.All(enemy => !enemy.IsAlive)
                 && !combat.Enemies.Any(enemy => enemy.IsAlive && enemy.IsPrimaryEnemy) && player.Creature.CurrentHp > 0;
-            if (!victoryConditions)
+            if (!victoryConditions && !defeat)
                 throw new PredictionUnsupportedException("Native EndCombatInternal did not satisfy this fixed battle's living-player/dead-enemy Victory conditions.");
             V040Snapshot mana = CaptureState(_stateType!, GetLiveManaState(player));
-            CombatRootV1 root = WithExtension(adapter.CaptureLive(combat, terminalVictory: true), mana, selectedForm);
+            CombatRootV1 root = WithExtension(adapter.CaptureLive(combat, terminalVictory: victoryConditions, terminalDefeat: defeat), mana, selectedForm);
             string stateText = ContinuationStamp.CaptureLive(combat).StateText;
             object[] enemies = combat.Enemies.Select(enemy => (object)new
             {
@@ -845,7 +875,7 @@ internal static class EleanorV040Probe
                 hp = enemy.CurrentHp,
                 alive = enemy.IsAlive,
             }).ToArray();
-            return new VictoryTerminalCapture(root, stateText, mana, player.Creature.CurrentHp, enemies, victoryConditions);
+            return new VictoryTerminalCapture(root, stateText, mana, player.Creature.CurrentHp, enemies, victoryConditions, defeat);
         };
         _victoryTerminalEvidence = null;
         _victoryTerminalCaptureError = null;
@@ -853,6 +883,10 @@ internal static class EleanorV040Probe
         if (Harmony.GetPatchInfo(candidates[0])?.Prefixes.Any(p=>p.owner==GameBootstrap.Harmony.Id && p.PatchMethod.Name==nameof(CaptureVictoryTerminalPrefix))!=true)
         GameBootstrap.Harmony.Patch(candidates[0], prefix: new HarmonyMethod(
             typeof(EleanorV040Probe).GetMethod(nameof(CaptureVictoryTerminalPrefix), BindingFlags.Static | BindingFlags.NonPublic)!));
+        MethodInfo loss = typeof(CombatManager).GetMethods(BindingFlags.Instance | BindingFlags.NonPublic)
+            .Single(m => m.Name == "ProcessPendingLoss" && m.GetParameters().Length == 1 && m.GetParameters()[0].ParameterType.Name == "CombatTurnState");
+        if (Harmony.GetPatchInfo(loss)?.Prefixes.Any(p => p.owner == GameBootstrap.Harmony.Id && p.PatchMethod.Name == nameof(CaptureVictoryTerminalPrefix)) != true)
+            GameBootstrap.Harmony.Patch(loss, prefix: new HarmonyMethod(typeof(EleanorV040Probe), nameof(CaptureVictoryTerminalPrefix)));
         MethodInfo hoverClear = AccessTools.Method(typeof(NHoverTipSet), nameof(NHoverTipSet.Clear), Type.EmptyTypes)
             ?? throw new MissingMethodException(nameof(NHoverTipSet), nameof(NHoverTipSet.Clear));
         if (!hoverClear.IsStatic || hoverClear.ReturnType != typeof(void))

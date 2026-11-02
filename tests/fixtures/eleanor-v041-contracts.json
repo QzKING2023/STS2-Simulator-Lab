@@ -1,0 +1,8 @@
+{
+  "schema":"eleanor-independent-contracts/v1",
+  "assemblySha256":"949320F651298D34399335EB28176578D270139DFF2CCE60FB7FDF35E7DBAD42",
+  "basis":"Locked v0.4.1 implementation and reviewed design; literal independent expectation, never regenerated from live DynamicVars or mirrors.",
+  "manaShield":{"energyPaid":1,"manaCost":1,"baseBlock":5,"extraBlock":5,"upgradedExtraBlock":8,"failedManaPaymentStillExecutesBase":true},
+  "reverseFailedUpkeep":{"hpDamage":10,"stance":"Neutral","withdrawOwnStrengthDexterity":true,"ifDeadSkipOrbStart":true},
+  "deathLifecycle":{"pendingLossEmitsCombatEnded":true,"pendingLossCallsAfterCombatEnd":false,"testModeSkipsRunEndedAndGameOverUi":true,"labMustNotResetResidualRoleState":true}
+}

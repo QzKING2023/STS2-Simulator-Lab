@@ -1,0 +1,6 @@
+[
+  {"id":"seed2-take-a","phase":"second-battle","reasonToken":"CARD.RETURN_FLOW"},
+  {"id":"seed2-take-b","phase":"second-battle","reasonToken":"CARD.RETURN_FLOW"},
+  {"id":"seed3-take-a","phase":"second-battle","reasonToken":"CARD.MANA_CONVERSION_PRINCIPLE"},
+  {"id":"seed3-take-b","phase":"second-battle","reasonToken":"CARD.MANA_CONVERSION_PRINCIPLE"}
+]

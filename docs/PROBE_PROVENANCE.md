@@ -1,5 +1,9 @@
 # Implementation provenance and isolation
 
+Stage 1 evidence and the immutable source/artifact manifest are documented in [STAGE_1_VALIDATION.md](STAGE_1_VALIDATION.md). Terminal capture now distinguishes the original Victory teardown prefix from a read-only `ProcessPendingLoss(CombatTurnState)` prefix. Native TestMode skips CreatureCmd's run-ended/history/metrics/game-over UI path; no loss method or role reset is suppressed. Combat Death is compared before that boundary; remaining state/subscriptions are observed separately after the actual CombatEnded event. The full retail loss lifecycle is outside this evidence.
+
+The historical candidate is `31F713F7CF538FB9C0A076E24560EE1BDC0C5FF852EFBA872C91BC722BEE7D0A`; independent review rejected its result-gate/progress handling. The replacement frozen identity and repaired evidence are in [STAGE_1_REVIEW_REPAIRS.md](STAGE_1_REVIEW_REPAIRS.md). Wrong-manifest/artifact/input/source controls operate on metadata copies; exception/watchdog/mismatch and mid-query-fault controls remain explicitly labelled. The separate older-role compatibility build is not presented as the main binary. No raw local source snapshots, game inputs or execution artifacts belong in a public release.
+
 ## Source boundaries
 
 The core protocol, comparison adapters and validation drivers are Lab code. Integration targets the MIT-licensed CombatSolver 0.50.1 reference, retained as a local dependency with its original license. Overlay scripts contain exact source anchors and Lab extensions; they fail on incompatible upstream layouts. See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
@@ -37,6 +41,14 @@ The cases runner freezes the first actually passed native battle plan and checks
 
 The five-process milestone has 24 checks: per-action differential/parent isolation, next-root equality and save/discovery isolation for each process; per-policy lifecycle/reward, terminal/root and full fixed-plan repeat checks; shared reward options, shared prefix plan and nonzero Record/Echo teardown checks.
 
-The separate power API fixture does not represent an implemented Echo card. ManaShield is acquired natively but its effect is not yet adapted. The milestone stops at next-combat first action, and does not establish retail rendering, full framework compatibility, complete character coverage or balance.
+The separate power API fixture does not represent an implemented Echo card. The published minimum-loop snapshot stops at next-combat first action; the subsequent local milestone adapts and executes ManaShield. Neither establishes retail rendering, full framework compatibility, complete character coverage or balance.
 
 The paragraph above describes the published minimum-loop snapshot. The local-only extension adds a strict ManaShield mirror and actual two-battle replays; see [TWO_BATTLE_VALIDATION.md](TWO_BATTLE_VALIDATION.md). It uses real acquired-card DeckVersion checks, native hand resolution, explicit nonterminal prefix results and separate per-policy frozen second-battle plans. It preserves the original audit and partial/full terminal distinction.
+
+The further bounded stages in [EXTENDED_VALIDATION.md](EXTENDED_VALIDATION.md) label their native API setup separately from natural reward acquisition. The six ManaShield boundary fixtures use genuine upgrade/resource commands, then independent simulator branches. Batch seeds are immutable bindings from the actual native scenario argument; they are declared before execution and never replaced after failure.
+
+Opening card identity remains tied to captured native references. Independently generated cards receive stable per-world ordered first-observation identities. Counts, order, model/state and complete continuations must still match. A generated play resolves by an already-observed unique hand identity plus owner/model, after complete root equality, rather than by type/name alone. The retained failing plan verifies real Slimed generation and play with this resolver.
+
+Native reward synchronization is queried before issuing a skip: taking all rewards can already close the reward set. The driver does not alter reward completion or effects. Two naturally offered Mod cards remain explicit unsupported coverage boundaries.
+
+`NativeCombatDecision` wraps the already-used CombatSolver query. A ticket holds the actual source combat and complete live/continuation stamps, verifies search left native state unchanged, and is consumed exactly once. Each online iteration executes one actual action through the existing differential replay before querying the resulting boundary. The separate frozen mode executes recorded one-action chunks without new solver queries. The three-process bounded fixture passed 15 checks; no global optimality, arbitrary-seed support or full-run strategy claim follows.

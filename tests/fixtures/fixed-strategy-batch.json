@@ -1,0 +1,22 @@
+{
+  "schema": "fixed-strategy-batch/v1",
+  "seeds": [
+    "LAB_V0111_ELEANOR_V040_FORM_01",
+    "LAB_V0111_ELEANOR_BATCH_02",
+    "LAB_V0111_ELEANOR_BATCH_03"
+  ],
+  "selection": "Original baseline plus two literal sequential labels, declared before execution; never replace failures.",
+  "policies": ["skip", "take"],
+  "repeats": 2,
+  "rewardPolicy": "Collect native gold. Skip card, or take native offered card index 0. Skip other pending rewards.",
+  "combatPolicy": "First battle: bounded Evaluate route. Second: defend/draw until acquired ManaShield is naturally playable, then bounded Evaluate routes. Unsupported acquired cards stop explicitly.",
+  "repeatPolicy": "Freeze the first execution's emitted first-battle route and second-battle chunks when present; second execution replays those actions. No seed replacement or victory filtering.",
+  "profile": "Low",
+  "beam": 8,
+  "nodes": 1000,
+  "budgetMilliseconds": 5000,
+  "dop": 1,
+  "maxSecondBattleChunks": 12,
+  "maxSecondBattleTurns": 12,
+  "maxRewardDrawTurn": 5
+}

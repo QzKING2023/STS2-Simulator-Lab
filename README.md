@@ -15,6 +15,14 @@ This is a validation milestone, not complete character support, independent rewa
 
 See [milestone scope](docs/MILESTONE_STATUS.md), [validation setup](docs/VALIDATION.md), and [implementation provenance](docs/PROBE_PROVENANCE.md).
 
+## Roadmap and active work
+
+- [Long-term roadmap](docs/LONG_TERM_ROADMAP.md): priorities, architecture choices, evidence boundaries and milestone gates.
+- [Stage 1 implementation plan](docs/STAGE_1_IMPLEMENTATION_PLAN.md): the bounded plan for terminal outcomes, budget stops, stale-action rejection, independent contracts and a reproducible final regression. This is a design handoff, not a completion report.
+- [Stage 1 implementation and verification](docs/STAGE_1_VALIDATION.md): actual terminal behavior, result classification, regression evidence and retained limits.
+- [Stage 1 review repairs](docs/STAGE_1_REVIEW_REPAIRS.md): accepted result-gate repairs, frozen build identity, negative controls and independent re-review.
+- [Latest bounded validation evidence](docs/EXTENDED_VALIDATION.md): ManaShield boundaries, the declared seed cohort and online decisions.
+
 ## Core checks
 
 The core protocol library does not require game or Mod assemblies:

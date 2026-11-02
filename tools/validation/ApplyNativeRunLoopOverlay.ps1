@@ -25,6 +25,18 @@ $insert = @'
 if (-not $s.Contains($anchor)) { throw 'Native preflight overlay lacks Program anchor.' }
 $s = $s.Replace($anchor,$insert + "`n" + $anchor)
 $anchor = '            payload["budget"] = DescribeBudget(options);'
+$s = $s.Replace($anchor, @'
+            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SIMULATORLAB_STAGE_ONE_CASE")))
+            {
+                payload["stageOne"] = EleanorV040Probe.RunStageOne(combat!,loop,options);
+                return 0;
+            }
+            if (Environment.GetEnvironmentVariable("SIMULATORLAB_SHIELD_FIXTURE") == "1")
+            {
+                payload["shieldBoundary"] = EleanorV040Probe.RunManaShieldBoundary(combat!,loop,options.OutputDirectory);
+                return 0;
+            }
+'@ + "`n" + $anchor)
 $s = $s.Replace($anchor, '            if (NativeModRunLoop.RecordFixtureEnabled) NativeModRunLoop.RecordingFixture = EleanorV040Probe.AddRecordingResetFixture(combat!, loop);' + "`n" + $anchor)
 $anchor = '                if (Environment.GetEnvironmentVariable("SIMULATORLAB_ELEANOR_V041_VICTORY_REPLAY") == "1")'
 $insert = @'
@@ -46,6 +58,7 @@ $anchor = '        EncounterModel mutableEncounter = encounter.ToMutable();'
 $s = $s.Replace($anchor, @'
         if (NativeModRunLoop.Enabled)
         {
+            NativeModRunLoop.BindScenarioSeed(scenario.Seed);
             await RunManager.Instance.EnterMapCoord(runState.Map.StartingMapPoint.coord);
             HarnessLog.Trace("native_first_map_entry");
             return;
