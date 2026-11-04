@@ -58,6 +58,8 @@ internal sealed class VanillaCombatRootAdapter
     public string ScenarioId { get; }
     public string CombatId { get; private set; } = "";
 
+    internal string ObservedCardId(CardModel card, bool predicted) => CardId(card, predicted);
+
     public PredictedCard ResolvePredictedHandCard(CardModel nativeCard, SimPlayerCombatState predicted)
     {
         // Called only after the complete ordered roots/continuations matched. Resolve an

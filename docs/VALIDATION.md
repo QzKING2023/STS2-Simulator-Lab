@@ -1,3 +1,5 @@
+> 2026-11-04 最终状态：M1 在固定原版 Ironclad/A0 声明范围验收通过。最终构建自然 RunVictory464、两次同构建重放和六固定种子各自真实 Death/重放已核验；旧失败、独立 legacy 构建和未覆盖项保留。详见 [M1_FINAL_ACCEPTANCE.md](M1_FINAL_ACCEPTANCE.md)。以下按时间保留历史记录；其中未完成声明不是最新状态。
+
 # Validation setup
 
 Stage 1's historical evidence and acceptance matrix are in [STAGE_1_VALIDATION.md](STAGE_1_VALIDATION.md); the mandatory independent-review repairs and replacement artifact are in [STAGE_1_REVIEW_REPAIRS.md](STAGE_1_REVIEW_REPAIRS.md). `run-stage-one.ps1` consumes a frozen manifest, fresh output directory and the retained sixteen-action plan; `TestStageOneEvidence.ps1` reviews its artifacts. Intermediate summaries have `completed=false`. Batch exit 2 is reserved for declared unsupported paths; incomplete budget/cancel/environment/no-candidate outcomes use exit 3, execution/verification failures exit 1, verified complete outcomes exit 0. Expected fault controls keep their original child exit 1.
@@ -7,6 +9,10 @@ Use .NET 9 and PowerShell 7. Protocol-only checks need no game inputs:
 ~~~powershell
 dotnet run --project tests/SimulatorLab.Core.Checks/SimulatorLab.Core.Checks.csproj
 ~~~
+
+## 默认验收范围（2026-11-03）
+
+每轮先明确改动范围、受影响依赖和通过/失败/未完成标准，再按[原生流程证据的信任边界与分层验收](NATIVE_RUN_EVIDENCE_TRUST_BOUNDARY.md)选择检查器重验、受影响生成链重跑或扩大/全量回归。报告必须区分历史原始证据重验与本构建新进程执行；记录版本、输入、采集口径、结果、未覆盖风险及范围选择理由。当前切片通过不关闭最终同构建全量、完整自然 run 和里程碑评估门。
 
 ## External inputs
 

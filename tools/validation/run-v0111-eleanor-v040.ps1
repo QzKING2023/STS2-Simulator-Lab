@@ -87,6 +87,7 @@ $sourceNames = @(
     'run-v0111-eleanor-v040.ps1'
 )
 $sourceNames += @('StageOneProbe.cs','ApplyStageOneHarnessOverlay.ps1','VanillaBattleReplayProbe.cs','VanillaRandomTargetProbe.cs','NativeRunLoopProbe.cs')
+$sourceNames += @('AdapterCardSelection.cs','ApplyAdapterCardSelectionOverlay.ps1','EleanorRewardCardMirrors.cs','RewardCardSelectionBridge.cs','RewardCardBoundaryProbe.cs','RewardCardIdentityProbe.cs')
 $sourcePaths = @($sourceNames | ForEach-Object { Join-Path $PSScriptRoot $_ })
 $sourcePaths += @(Get-ChildItem -LiteralPath (Join-Path $labRoot 'src/SimulatorLab.Core') -Filter '*.cs' -File | Sort-Object Name | ForEach-Object FullName)
 $revisionInput = (($sourcePaths | ForEach-Object { (Get-FileHash -Algorithm SHA256 -LiteralPath $_).Hash }) -join '')
@@ -130,6 +131,8 @@ $relicTurnStartOverlay = Join-Path $PSScriptRoot 'ApplyCombatSolverRelicTurnStar
 $relicTurnStartAdapter = Join-Path $PSScriptRoot 'AdaptedRelicBeforeHandDrawMirrors.cs'
 & $relicTurnStartOverlay -SourceRoot (Join-Path $cacheRoot 'src') -AdapterSource $relicTurnStartAdapter
 $overlayFiles = @(Get-ChildItem -LiteralPath (Join-Path $cacheRoot 'src') -Recurse -Filter '*.cs' -File | ForEach-Object { [ordered]@{path=[IO.Path]::GetRelativePath($cacheRoot,$_.FullName);sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash} })
+& (Join-Path $PSScriptRoot 'ApplyAdapterCardSelectionOverlay.ps1') -TargetRoot $cacheRoot
+$overlayFiles = @(Get-ChildItem -LiteralPath (Join-Path $cacheRoot 'src') -Recurse -Filter '*.cs' -File | ForEach-Object { [ordered]@{path=[IO.Path]::GetRelativePath($cacheRoot,$_.FullName);sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash} })
 [IO.File]::WriteAllText($overlayLock,([ordered]@{revision=$revision;files=$overlayFiles} | ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
 }
 $harnessRoot = Join-Path $cacheRoot 'tools\search\OfflineSearchHarness'
@@ -138,6 +141,7 @@ foreach ($name in @('EleanorV040Probe.cs', 'ManaShieldBoundaryProbe.cs', 'Eleano
 }
 
 $programPath = Join-Path $harnessRoot 'Program.cs'
+foreach($name in @('EleanorRewardCardMirrors.cs','RewardCardSelectionBridge.cs','RewardCardBoundaryProbe.cs','RewardCardIdentityProbe.cs')) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $harnessRoot $name) -Force }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'StageOneProbe.cs') -Destination (Join-Path $harnessRoot 'StageOneProbe.cs') -Force
 $program = [IO.File]::ReadAllText($programPath, [Text.Encoding]::UTF8)
 $loadMarker = 'if (Environment.GetEnvironmentVariable("SIMULATORLAB_ELEANOR_MOD") == "1")'

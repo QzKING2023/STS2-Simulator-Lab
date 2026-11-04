@@ -84,12 +84,14 @@ internal static partial class EleanorV040Probe
         RegisterManaCardMirror(mod, "ManaStrike", "ManaGather", nameof(DispatchManaStrike));
         RegisterManaCardMirror(mod, "ManaGather", "ManaStrike", nameof(DispatchManaGather));
         RegisterManaCardMirror(mod, "ManaShield", "ManaStrike", nameof(DispatchManaShield));
+        RegisterRewardCards(mod);
         RegisterRecordingPowers(mod, _manifest);
         RegisterTemporaryRecordingTurnStart(mod, _manifest);
         RegisterCrystalOrbTurnStart(mod, _manifest);
         RegisterGuidingPower(mod, cardType, choiceBase, white, black, _manifest);
         VerifyLatePowerHookPatchInvalidatesRoot();
         VerifyLateTurnStartPatchInvalidatesRoot();
+        VerifyRewardPatchAudit(mod);
         _ = AdaptedCardOnPlayMirrors.CaptureLiveStamp();
     }
 
@@ -370,6 +372,8 @@ internal static partial class EleanorV040Probe
         var stepReports = new List<object>();
         string? stopReason = null;
         int stopActionIndex = -1;
+        int nativeDispatchCount = 0;
+        bool? invalidActionNativeUnchanged = null;
         string status = openingExact ? "running" : "failed";
         bool nativeVictory = false;
         bool simulatorVictory = false;
@@ -441,10 +445,15 @@ internal static partial class EleanorV040Probe
             decimal targetHpBefore = 0m;
             string targetName = "";
             string executionStage = "resolve-action";
+            AdapterSelectionEvidence[] actionSelections = [];
+            object[] nativeSelectionCalls = [];
+            int nativeGeneratedBefore = CombatManager.Instance.History.Entries.OfType<MegaCrit.Sts2.Core.Combat.History.Entries.CardGeneratedEntry>().Count();
+            int simulatorGeneratedBefore = branch.History.Entries.OfType<CombatPredictionCardGeneratedEntry>().Count();
             CombatRootV1? predictedTerminalRoot = null;
             string? predictedTerminalText = null;
             try
             {
+                PlanAction fullAction = ParseAction(action);
                 if (kind == "PlayCard")
                 {
                     executionStage = "resolve-native-card-instance";
@@ -453,6 +462,13 @@ internal static partial class EleanorV040Probe
                     if (cardOccurrence < 0 || cardOccurrence >= nativeMatches.Length)
                         throw new ValidationStopException(ValidationStop.InvalidAction,"card-not-in-hand",$"Planned card {cardId} occurrence {cardOccurrence} is not in the native hand.");
                     CardModel nativeCard = nativeMatches[cardOccurrence];
+                    if(action.TryGetProperty("labChoiceSource",out var choiceSource) &&
+                        (choiceSource.GetProperty("live").GetString()!=CombatRootSnapshot.Capture(combat).LiveStamp.StateText ||
+                         choiceSource.GetProperty("continuation").GetString()!=beforeNativeText || choiceSource.GetProperty("sequence").GetInt64()!=NativeCombatDecision.BoundarySequence))
+                        throw new ValidationStopException(ValidationStop.InvalidAction,"choice-stale","Choice action source boundary is stale.");
+                    if (!string.IsNullOrEmpty(fullAction.CardStateKey) &&
+                        (CardChoiceSupport.ChoiceCardKey(nativeCard) != fullAction.CardStateKey || nativeCard.CurrentUpgradeLevel != fullAction.CardUpgradeLevel))
+                        throw new ValidationStopException(ValidationStop.InvalidAction,"card-state","Planned card state is stale.");
                     NativeModRunLoop.VerifySecondRewardCard(nativeCard);
                     PredictedCard predictedCard = branch.State.FindCard(nativeCard)
                         ?? adapter.ResolvePredictedHandCard(nativeCard, branch.State.GetPlayerCombatState(player));
@@ -473,8 +489,17 @@ internal static partial class EleanorV040Probe
                     if (!simulatedCombat.CanPlayCard(branch, predictedCard, out _, out _))
                         throw new PredictionUnsupportedException($"Simulator rejects planned {cardId} as unplayable at turn {liveTurn}.");
                     executionStage = "simulator-manual-play";
-                    if (!branch.ManualPlay(predictedCard, target, out _))
-                        throw new PredictionUnsupportedException($"Simulator rejects planned {cardId} at turn {liveTurn}.");
+                    simulatedCombat.BeginActionChoices(fullAction.GetActionChoicesInExecutionOrder());
+                    try
+                    {
+                        using var scope = simulatedCombat.BeginCardExecutionScope(new HashSet<uint>());
+                        if (!branch.ManualPlay(predictedCard, target, out _) || branch.HasPendingChoice)
+                            throw new InvalidPlannedChoiceBranchException($"Executable action {cardId} is missing a required choice.");
+                        if (!CombatBeamSolver.SettleReplayActionBoundary(branch,simulatedCombat))
+                            throw new InvalidPlannedChoiceBranchException("Executable action did not settle its nested choices.");
+                    }
+                    finally { simulatedCombat.EndActionChoices(); }
+                    actionSelections=simulatedCombat.AdapterSelections.ToArray();
                     simulatedAccepted = true;
                     executionStage = "simulator-win-check";
                     _ = branch.CheckWinCondition(liveTurn);
@@ -492,9 +517,24 @@ internal static partial class EleanorV040Probe
                     {
                         var selector = new CardChoiceSelector(_selectedForm, formChoiceType,
                             formChoiceType.GetProperty("Form") ?? throw new MissingMemberException(formChoiceType.FullName, "Form"));
-                        using (CardSelectCmd.UseSelector(selector)) nativeAccepted = nativeCard.TryManualPlay(target);
+                        using (CardSelectCmd.UseSelector(selector))
+                        {
+                            nativeDispatchCount++;
+                            nativeAccepted = nativeCard.TryManualPlay(target);
+                            loop.RunUntilCompleted(RunManager.Instance.ActionExecutor.FinishedExecutingActions(), TimeSpan.FromSeconds(45),"Native Guide selection drain");
+                        }
                     }
-                    else nativeAccepted = nativeCard.TryManualPlay(target);
+                    else
+                    {
+                        var selector=new RewardSelectionBridge(actionSelections);
+                        using(CardSelectCmd.UseSelector(selector))
+                        {
+                            nativeDispatchCount++;
+                            nativeAccepted=nativeCard.TryManualPlay(target);
+                            if(nativeAccepted)loop.RunUntilCompleted(RunManager.Instance.ActionExecutor.FinishedExecutingActions(),TimeSpan.FromSeconds(45),"Native selected action drain");
+                            selector.AssertConsumed();nativeSelectionCalls=selector.Calls.ToArray();
+                        }
+                    }
                     if (!nativeAccepted) throw new PredictionUnsupportedException($"Native game rejected planned {cardId} at turn {liveTurn}.");
                     executionStage = "native-action-drain";
                     loop.RunUntilCompleted(RunManager.Instance.ActionExecutor.FinishedExecutingActions(), TimeSpan.FromSeconds(45),
@@ -537,6 +577,7 @@ internal static partial class EleanorV040Probe
                             root.Forecast, root.StartTurnNumber).StateText;
                     }
                     executionStage = "native-end-turn-enqueue";
+                    nativeDispatchCount++;
                     CombatManager.Instance.OnEndedTurnLocally();
                     RunManager.Instance.ActionQueueSynchronizer.RequestEnqueue(new EndPlayerTurnAction(player, liveTurn));
                     executionStage = "native-enemy-phase-drain";
@@ -549,8 +590,15 @@ internal static partial class EleanorV040Probe
                 }
                 else throw new PredictionUnsupportedException($"Unsupported fixed-plan action kind '{kind}'.");
             }
+            catch (InvalidPlannedChoiceBranchException ex)
+            {
+                invalidActionNativeUnchanged = ContinuationStamp.CaptureLive(combat).StateText == beforeNativeText;
+                status="invalid-action";stopReason=ex.Message;break;
+            }
             catch (ValidationStopException ex)
             {
+                if(ex.Reason==ValidationStop.InvalidAction)
+                    invalidActionNativeUnchanged = ContinuationStamp.CaptureLive(combat).StateText == beforeNativeText;
                 status = ValidationOutcomeV1.StatusForStop(ex.Reason);
                 stopReason = ex.Code + ": " + ex.Message;
                 break;
@@ -596,6 +644,7 @@ internal static partial class EleanorV040Probe
             string afterSimulatorText = predictedTerminalText ?? ContinuationStamp.CapturePredicted(player, branch, afterTurn,
                 root.Forecast, root.StartTurnNumber).StateText;
             List<string> differences = DescribeRootDifferences(afterNativeRoot, afterSimulatorRoot);
+            var generationHistory = CaptureRewardGenerationHistory(combat, branch, adapter, nativeGeneratedBefore, simulatorGeneratedBefore);
             CaptureValidationV1 nativeRootValidation = CombatCaptureValidator.ValidateExactReady(afterNativeRoot);
             CaptureValidationV1 simulatorRootValidation = CombatCaptureValidator.ValidateExactReady(afterSimulatorRoot);
             CombatRootV1 parentAfterRoot = WithExtension(adapter.CapturePredicted(combat, player, parent,
@@ -608,6 +657,9 @@ internal static partial class EleanorV040Probe
             bool exact = simulatedAccepted && nativeAccepted && differences.Count == 0
                 && StringComparer.Ordinal.Equals(afterNativeText, afterSimulatorText) && parentUnchanged
                 && nativeRootValidation.IsExactReady && simulatorRootValidation.IsExactReady;
+            exact &= generationHistory.Matches;
+            if(cardId=="MANA_CONVERSION_PRINCIPLE")
+                exact &= generationHistory.Native.Length == (actionSelections.Any(s=>s.Context=="transform/essence"&&s.Options.Length>0)?1:0);
             stepReports.Add(new
             {
                 index = index + 1, kind, turn = liveTurn, afterTurn, cardId,
@@ -628,6 +680,8 @@ internal static partial class EleanorV040Probe
                 beforeNativeContinuation = beforeNativeText, beforeSimulatorContinuation = beforeSimulatorText,
                 nativeContinuation = afterNativeText, simulatorContinuation = afterSimulatorText,
                 postActionRootDifferences = differences,
+                actionSelections, nativeSelectionCalls,
+                generationHistory,
                 nativeRootValidation, simulatorRootValidation,
                 parentRoot = parentAfterRoot, parentContinuation = parentAfterText,
                 parentRootDifferences = parentDifferences,
@@ -693,6 +747,7 @@ internal static partial class EleanorV040Probe
                 planPath = planFullPath,
                 planSha256,
                 planActionCount,
+                nativeDispatchCount, invalidActionNativeUnchanged,
                 testMode = TestMode.IsOn,
                 steamInitialized = SteamInitializer.Initialized,
                 saveStore = saveStore.GetType().Name,

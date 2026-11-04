@@ -8,6 +8,7 @@ $checks=[Collections.Generic.List[object]]::new()
 function Check($name,$pass){$checks.Add([ordered]@{name=$name;passed=[bool]$pass})}
 $summary=Read (Join-Path $root 'summary.json');$manifest=Read (Join-Path $root 'build-manifest.json');$cases=Read (Join-Path $root 'case-manifest.json')
 $required=@('vanilla','retained-victory','two-battle','shield','batch','online','slimed-replay','core','owned-worker-watchdog','failure-propagation-controls')
+if($summary.coverageProfile-eq'reward-v2'){$required+=@('reward-cards','reward-choice-fields')}
 $expectedJobs=@($required)+@(foreach($c in $cases.cases){foreach($repeat in 1..$cases.repeats){$c.id+'-'+$repeat}})
 Check 'all declared jobs returned their expected exits' ($summary.completed-and@($summary.results|Where-Object{-not$_.passed-or$_.exit-ne$_.expectedExit}).Count-eq0-and$summary.results.Count-eq$expectedJobs.Count-and-not$summary.targetedOnly)
 foreach($id in $expectedJobs){Check ("required job present exactly once: $id") (@($summary.results|Where-Object{$_.id-eq$id}).Count-eq1)}
@@ -55,12 +56,34 @@ foreach($case in $two.cases){
 }
 foreach($dir in @('batch','slimed-replay')){
  $s=Read (Join-Path $root "$dir/summary.json")
- Check ($dir+' keeps twelve paths and four unsupported') ($s.cases.Count-eq12-and@($s.cases|Where-Object{$_.status-eq'unsupported'}).Count-eq4)
+ $v2=$summary.coverageProfile-eq'reward-v2'
+ Check ($dir+' keeps declared twelve-path coverage') ($s.cases.Count-eq12-and@($s.cases|Where-Object{$_.status-eq'unsupported'}).Count-eq$(if($v2){0}else{4}))
   $reports=@{};foreach($c in $s.cases){$reports[$c.id]=Read $c.report}
   $spec=Read (Join-Path $root "$dir/declaration.json")
   $ids=@(foreach($i in 1..3){foreach($p in $spec.policies){foreach($rep in 'a','b'){"seed$i-$p-$rep"}}})
-  $classification=Get-BatchClassification $s.cases $reports $ids (Read (Join-Path $PSScriptRoot '../../tests/fixtures/stage-one-known-gaps.json')) $s.checks
-  Check ($dir+' independently recomputed typed aggregation and raw exits') ($classification.exitCode-eq2-and$classification.correctnessChecksPassed-and$classification.countedPaths-eq12-and$classification.counts.passed-eq8)
+  $gaps=if($v2){@()}else{Read (Join-Path $PSScriptRoot '../../tests/fixtures/stage-one-known-gaps.json')}
+  $classification=Get-BatchClassification $s.cases $reports $ids $gaps $s.checks
+  Check ($dir+' independently recomputed typed aggregation and raw exits') ($classification.exitCode-eq$(if($v2){0}else{2})-and$classification.correctnessChecksPassed-and$classification.countedPaths-eq12)
+}
+if($summary.coverageProfile-eq'reward-v2'){
+ $s=Read (Join-Path $root 'reward-cards/summary.json')
+ $declared=Read (Join-Path $root 'reward-cards/case-declaration.json')
+ $ids=@(foreach($c in $declared){foreach($rep in 'a','b'){"$c-$rep"}})
+ Check 'reward boundary exact membership and repeat denominator' ($declared.Count-eq45-and$s.cases.Count-eq$ids.Count-and@($s.cases.id|Sort-Object -Unique).Count-eq$ids.Count-and@($ids|Where-Object{$_-notin$s.cases.id}).Count-eq0-and$s.checks.Count-eq$declared.Count)
+ Check 'reward boundary processes and repeats' ($s.status-eq'passed'-and@($s.cases|Where-Object{$_.exit-ne0-or$_.status-ne'passed'}).Count-eq0-and@($s.checks|Where-Object{-not$_.passed}).Count-eq0)
+ $fields=Read (Join-Path $root 'reward-choice-fields/summary.json')
+ Check 'choice field controls raw failure exits and exact prefixes' ($fields.cases.Count-eq4-and$fields.status-eq'passed'-and@($fields.cases|Where-Object{$_.rawExit-ne1-or-not$_.passed-or-not$_.rejectedActionSourceUnchanged-or$_.nativeDispatchCount-ne$_.expectedPrefix-or$_.confirmedPrefix-ne$_.expectedPrefix}).Count-eq0)
+ foreach($c in $s.cases){
+  $r=Read $c.path
+  $bad=@($r.replays|Where-Object{$_.status-ne'boundary'-or$_.steps.Count-lt1})+@($r.replays.steps|Where-Object{-not$_.exactStateMatch-or-not$_.parentBranchUnchanged-or-not$_.generationHistory.Matches-or$_.nativeContinuation-cne$_.simulatorContinuation})
+  $historyBad=@($r.replays.steps|Where-Object{-not(Same $_.generationHistory.Native $_.generationHistory.Simulator)})
+  Check ($c.id+' direct replay, deck and generation history evidence') ($bad.Count-eq0-and$historyBad.Count-eq0-and$r.replays.Count-ge1-and$r.permanentDeckUnchanged-and$r.permanentDeckReferencesUnchanged-and(Same $r.permanentDeckBefore $r.permanentDeckAfter)-and$r.permanentDeckSerializedBefore-ceq$r.permanentDeckSerializedAfter)
+  if($c.id-like'*-identity-*'){
+   $proof=if($r.identityEvidence.siblingProof){$r.identityEvidence.siblingProof}else{$r.identityEvidence}
+   Check ($c.id+' same-parent physical A/B/A') ($proof.sameParent-and$proof.aRepeatedExact-and$proof.bDistinct-and$proof.parentUnchanged-and(Same $proof.a $proof.aAgain)-and-not(Same $proof.a $proof.b)-and$r.action.nestedChoices[0].cards[0].sourceOccurrence-eq1)
+   if($c.id-like'ManaConversion*') {Check ($c.id+' new Essence provenance and actual distinct play') ($r.identityEvidence.generatedEntryIsNewEssence-and$r.identityEvidence.targetRemoved-and$r.replays.Count-eq2-and$r.replays[0].steps[0].generationHistory.Native.Count-eq1-and$r.replays[1].steps[0].cardId-eq'MANA_ESSENCE')}
+  }
+ }
 }
 $online=Read (Join-Path $root 'online/summary.json')
 foreach($case in $online.cases){

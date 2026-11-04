@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][string]$BuildManifest,[Parameter(Mandatory)][string]$OutputDirectory,[switch]$TargetedOnly,[string]$RetainedVictoryPlan='')
+param([Parameter(Mandatory)][string]$BuildManifest,[Parameter(Mandatory)][string]$OutputDirectory,[switch]$TargetedOnly,[string]$RetainedVictoryPlan='',[switch]$RewardCompatibility)
 $ErrorActionPreference='Stop'
 if(-not$TargetedOnly-and[string]::IsNullOrWhiteSpace($RetainedVictoryPlan)){throw 'Full stage requires the retained sixteen-action Victory plan.'}
 $lab=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'));$manifest=[IO.Path]::GetFullPath($BuildManifest)
@@ -12,7 +12,7 @@ $caseFile=Join-Path $lab 'tests/fixtures/stage-one-cases.json';Copy-Item $caseFi
 $cases=Get-Content $caseFile -Raw|ConvertFrom-Json;$results=[Collections.Generic.List[object]]::new();$complete=$false
 function CheckFrozen { & (Join-Path $PSScriptRoot 'TestStageOneBuildManifest.ps1') -BuildManifest $manifest }
 function Record($id,$code,$expected,$path){$results.Add([ordered]@{id=$id;exit=$code;expectedExit=$expected;passed=($code-eq$expected);path=$path});SaveSummary}
-function SaveSummary { [ordered]@{schema='stage-one-summary/v1';buildId=$frozen.buildId;completed=$complete;updatedUtc=[DateTime]::UtcNow.ToString('o');status=if(@($results|Where-Object{-not$_.passed}).Count){'failed'}elseif(-not$complete){'partial'}else{'verified-with-known-gaps'};targetedOnly=[bool]$TargetedOnly;results=$results;knownUnsupported=$cases.knownUnsupported;semantics='Verification outcomes; expected controls are not actual native faults. Known coverage gaps retain suite exit 2.'}|ConvertTo-Json -Depth 12|Set-Content (Join-Path $out 'summary.json') -Encoding utf8 }
+function SaveSummary { [ordered]@{schema='stage-one-summary/v1';buildId=$frozen.buildId;completed=$complete;updatedUtc=[DateTime]::UtcNow.ToString('o');status=if(@($results|Where-Object{-not$_.passed}).Count){'failed'}elseif(-not$complete){'partial'}else{'verified'};targetedOnly=[bool]$TargetedOnly;coverageProfile=if($RewardCompatibility){'reward-v2'}else{'legacy-v1'};results=$results;knownUnsupported=$(if($RewardCompatibility){@()}else{$cases.knownUnsupported});semantics='Expected controls are labelled separately; each job retains its raw exit.'}|ConvertTo-Json -Depth 12|Set-Content (Join-Path $out 'summary.json') -Encoding utf8 }
 CheckFrozen
 if(-not$TargetedOnly){
  foreach($mode in @('Vanilla','EleanorVictory')){
@@ -53,11 +53,20 @@ if(-not$TargetedOnly){
  Remove-Item Env:SIMULATORLAB_STAGE_ONE_TICKETS
  foreach($entry in @(@{id='shield';script='run-extended-validation.ps1';expected=0},@{id='batch';script='run-fixed-strategy-batch.ps1';expected=2},@{id='online';script='run-online-decision-cases.ps1';expected=0})){
   CheckFrozen
-  & pwsh -NoProfile -File (Join-Path $PSScriptRoot $entry.script) -HarnessRoot $h -GamePath $game -OutputDirectory (Join-Path $out $entry.id) *> (Join-Path $out ($entry.id+'.log'))
+  $extra=@();if($RewardCompatibility-and$entry.id-eq'batch'){$extra=@('-CoverageProfile','reward-v2');$entry.expected=0}
+  & pwsh -NoProfile -File (Join-Path $PSScriptRoot $entry.script) -HarnessRoot $h -GamePath $game -OutputDirectory (Join-Path $out $entry.id) @extra *> (Join-Path $out ($entry.id+'.log'))
   Record $entry.id $LASTEXITCODE $entry.expected (Join-Path $out $entry.id)
  }
- & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'run-fixed-strategy-batch.ps1') -HarnessRoot $h -GamePath $game -OutputDirectory (Join-Path $out 'slimed-replay') -ReplayPlansFrom (Join-Path $lab '.build/runs/fixed-strategy-20261102-020903-886') *> (Join-Path $out 'slimed-replay.log')
- Record 'slimed-replay' $LASTEXITCODE 2 (Join-Path $out 'slimed-replay/summary.json')
+ $replaySource=Join-Path $lab '.build/runs/fixed-strategy-20261102-020903-886';$extra=@();$expected=2
+ if($RewardCompatibility){$replaySource=Join-Path $out 'batch';$extra=@('-CoverageProfile','reward-v2');$expected=0}
+ & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'run-fixed-strategy-batch.ps1') -HarnessRoot $h -GamePath $game -OutputDirectory (Join-Path $out 'slimed-replay') -ReplayPlansFrom $replaySource @extra *> (Join-Path $out 'slimed-replay.log')
+ Record 'slimed-replay' $LASTEXITCODE $expected (Join-Path $out 'slimed-replay/summary.json')
+ if($RewardCompatibility){
+  & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'run-reward-choice-field-controls.ps1') -HarnessRoot $h -OutputDirectory (Join-Path $out 'reward-choice-fields') -SourcePlan (Join-Path $out 'batch/seed1-skip-a/battle/route.json') *> (Join-Path $out 'reward-choice-fields.log')
+  Record 'reward-choice-fields' $LASTEXITCODE 0 (Join-Path $out 'reward-choice-fields/summary.json')
+  & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'run-reward-card-boundaries.ps1') -HarnessRoot $h -OutputDirectory (Join-Path $out 'reward-cards') *> (Join-Path $out 'reward-cards.log')
+  Record 'reward-cards' $LASTEXITCODE 0 (Join-Path $out 'reward-cards/summary.json')
+ }
 }
 CheckFrozen; $complete=$true; SaveSummary
 Write-Output "Stage one: $out; build=$($frozen.buildId)"

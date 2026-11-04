@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][string]$HarnessRoot,[string]$GamePath=$env:STS2_GAME_PATH,[string]$OutputDirectory='',[string]$ReplayPlansFrom='')
+param([Parameter(Mandatory)][string]$HarnessRoot,[string]$GamePath=$env:STS2_GAME_PATH,[string]$OutputDirectory='',[string]$ReplayPlansFrom='',[ValidateSet('legacy-v1','reward-v2')][string]$CoverageProfile='legacy-v1')
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'ClassifyBatchResults.ps1')
 $lab=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
@@ -15,8 +15,9 @@ if((Get-FileHash (Join-Path $GamePath 'data_sts2_windows_x86_64\sts2.dll')).Hash
 $profile=Join-Path $lab '.build\pinned-inputs\eleanor-v041-native-bootstrap'
 foreach($file in (Get-Content (Join-Path $profile 'input-lock.json') -Raw|ConvertFrom-Json).files){if((Get-FileHash $file.path).Hash-ne$file.sha256){throw 'Bootstrap input changed.'}}
 $declaration=Join-Path $lab 'tests\fixtures\fixed-strategy-batch.json'
+if($CoverageProfile-eq'reward-v2'){$declaration=Join-Path $lab 'tests/fixtures/reward-card-batch.json'}
 $spec=Get-Content $declaration -Raw|ConvertFrom-Json
-if($spec.schema-ne'fixed-strategy-batch/v1'-or$spec.seeds.Count-ne3-or$spec.policies.Count-ne2-or$spec.repeats-ne2){throw 'Expected the declared 3 x 2 x 2 matrix.'}
+if($spec.schema-notin@('fixed-strategy-batch/v1','fixed-strategy-batch/v2')-or$spec.seeds.Count-ne3-or$spec.policies.Count-ne2-or$spec.repeats-ne2){throw 'Expected the declared 3 x 2 x 2 matrix.'}
 if(-not$OutputDirectory){$OutputDirectory=Join-Path $lab ('.build\runs\fixed-strategy-'+[DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss-fff'))}
 $OutputDirectory=[IO.Path]::GetFullPath($OutputDirectory)
 if(-not$OutputDirectory.StartsWith((Join-Path $lab '.build\runs')+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Reports must stay in Lab runs.'}
@@ -73,6 +74,7 @@ for($i=1;$i-le3;$i++){foreach($policy in $spec.policies){
 }}
 $expectedIds=@(foreach($i in 1..3){foreach($policy in $spec.policies){foreach($rep in 'a','b'){"seed$i-$policy-$rep"}}})
 $gaps=Get-Content (Join-Path $lab 'tests/fixtures/stage-one-known-gaps.json') -Raw|ConvertFrom-Json
+if($CoverageProfile-eq'reward-v2'){$gaps=@()}
 $classification=Get-BatchClassification $cases $reports $expectedIds $gaps $checks
 $summary=[ordered]@{schema='fixed-strategy-results/v2';status=$classification.status;correctnessChecksPassed=$classification.correctnessChecksPassed;classification=$classification;counts=$classification.counts;replayPlansFrom=$ReplayPlansFrom;declarationSha256=(Get-FileHash $declaration).Hash;harnessSha256=(Get-FileHash $dll).Hash;cases=$cases;checks=$checks;interpretation='Finite declared fixture set, no win-rate estimate. Budget stops are incomplete, execution faults fail, only declared gaps permit exit 2. Death requires actual matched terminal evidence.'}
 $summary|ConvertTo-Json -Depth 10|Set-Content (Join-Path $OutputDirectory 'summary.json') -Encoding utf8

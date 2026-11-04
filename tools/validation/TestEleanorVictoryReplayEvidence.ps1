@@ -33,7 +33,18 @@ $negativeFlags = @($report.registrationEvidence | ForEach-Object { $_.PSObject.P
 # Preserve the published nine-row baseline; the new exact ManaShield adapter adds one complete control row.
 $shieldControls=@($report.registrationEvidence|Where-Object {$_.cardType-eq'MyMod.MyModCode.Cards.ManaShield'})
 $shieldValid=$shieldControls.Count-eq0-or($shieldControls.Count-eq1-and$shieldControls[0].wrongTargetRejected-and$shieldControls[0].wrongAssemblyRejected-and$shieldControls[0].wrongManifestRejected-and$shieldControls[0].existingPatchRejected)
-Check 'recorded strict registration controls passed' ($shieldValid -and $report.registrationEvidence.Count -eq (9+$shieldControls.Count) -and $negativeFlags.Count -gt 0 -and @($negativeFlags | Where-Object { -not $_.Value }).Count -eq 0)
+$rewardTypes=@('MyMod.MyModCode.Cards.ReturnFlow','MyMod.MyModCode.Cards.ManaConversionPrinciple','MyMod.MyModCode.Cards.ManaEssence')
+$rewardControls=@($report.registrationEvidence|Where-Object{$_.cardType-in$rewardTypes})
+$rewardValid=$rewardControls.Count-eq0
+if($rewardControls.Count-eq6){
+ $rewardValid=$true
+ foreach($type in $rewardTypes){
+  $source=@($rewardControls|Where-Object{$_.cardType-eq$type-and$_.PSObject.Properties.Name-contains'wrongTarget'})
+  $late=@($rewardControls|Where-Object{$_.cardType-eq$type-and$_.PSObject.Properties.Name-contains'actualLatePatchChangesStampAndRejects'})
+  $rewardValid=$rewardValid-and$source.Count-eq1-and$late.Count-eq1-and$source[0].wrongTarget-and$source[0].wrongAssembly-and$source[0].wrongManifest-and$source[0].existingPatchRejected-and$late[0].actualLatePatchChangesStampAndRejects-and$late[0].actualStateMachinePatchRejected
+ }
+}
+Check 'recorded strict registration controls passed' ($shieldValid -and $rewardValid -and $report.registrationEvidence.Count -eq (9+$shieldControls.Count+$rewardControls.Count) -and $negativeFlags.Count -gt 0 -and @($negativeFlags | Where-Object { -not $_.Value }).Count -eq 0)
 Check 'opening roots' (EqualJson $nodes['nativeOpeningRoot'] $nodes['simulatorOpeningRoot'])
 Check 'opening continuations' ($report.nativeOpeningContinuation -ceq $report.simulatorOpeningContinuation)
 $lastNative = $nodes['nativeOpeningRoot']

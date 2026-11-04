@@ -290,5 +290,24 @@ var interruptedPrefix=ReplayVerification.Aggregate("second-battle",nine.Take(2).
 Check("query failure retains two confirmed actions and uncertain current states",interruptedPrefix.ConfirmedActions==2&&interruptedPrefix.NativeOutcome==NativeOutcome.Unknown&&interruptedPrefix.SimulatorOutcome==NativeOutcome.Unknown&&interruptedPrefix.ExecutionState=="OutcomeUncertain");
 var lastVictory=BoundaryFixture("passed");
 Check("last chunk does not replace cumulative action count",ReplayVerification.Aggregate("second-battle",nine.Take(8).Append(lastVictory).ToArray(),"passed",null).ConfirmedActions==9);
+var nativeSlice=new NativeRunResultV1{Terminal=NativeRunTerminal.Ongoing,Stop=NativeRunStop.SliceBoundary,Dispatched=5,Confirmed=5,DataComplete=true,LastBoundary="next-combat"};
+Check("native-only slice has no invented simulator outcome",nativeSlice.Validate().Count==0&&nativeSlice.ExitCode==0&&nativeSlice.Comparison==ComparisonOutcome.NotCompared);
+Check("battle victory is not a complete run",(nativeSlice with{Stop=NativeRunStop.Completed}).ExitCode==1);
+Check("empty slice cannot pass",(nativeSlice with{Dispatched=0,Confirmed=0}).ExitCode==1);
+Check("native data gap cannot pass",(nativeSlice with{DataComplete=false}).ExitCode==1);
+Check("native pending dispatch cannot pass",(nativeSlice with{Dispatched=6}).ExitCode==1);
+Check("native mismatch cannot pass",(nativeSlice with{Comparison=ComparisonOutcome.Mismatch}).ExitCode==1);
+Check("native death is valid without fake simulation",(nativeSlice with{Stop=NativeRunStop.Completed,Terminal=NativeRunTerminal.Death}).ExitCode==0);
+Check("native budget is noncompletion",(nativeSlice with{Stop=NativeRunStop.BudgetExceeded}).ExitCode==3);
+Check("native unsupported retains own exit",(nativeSlice with{Stop=NativeRunStop.Unsupported}).ExitCode==2);
+Check("native unknown result fails closed",(nativeSlice with{Stop=(NativeRunStop)999}).ExitCode==1);
+object source=new();
+var nativeTicket=new NativeDecisionTicket(source,1,"state-a","PlayCard");
+nativeTicket.Consume(source,1,"state-a","PlayCard");
+Check("native ticket one-use",RejectsRunAction(()=>nativeTicket.Consume(source,1,"state-a","PlayCard")));
+Check("native action equality ignores only JSON formatting",NativeDecisionTicket.SameActionJson("{\"kind\":\"EndTurn\"}","{ \"kind\": \"EndTurn\" }"));
+Check("native action equality rejects additional fields",!NativeDecisionTicket.SameActionJson("{\"kind\":\"EndTurn\"}","{\"kind\":\"EndTurn\",\"NestedChoices\":[0]}"));
+foreach(var invalid in new Action[]{()=>new NativeDecisionTicket(source,1,"state-a","PlayCard").Consume(new object(),1,"state-a","PlayCard"),()=>new NativeDecisionTicket(source,1,"state-a","PlayCard").Consume(source,2,"state-a","PlayCard"),()=>new NativeDecisionTicket(source,1,"state-a","PlayCard").Consume(source,1,"state-b","PlayCard"),()=>new NativeDecisionTicket(source,1,"state-a","PlayCard").Consume(source,1,"state-a","EndTurn")})
+    Check("native ticket rejects source/sequence/state/action mismatch",RejectsRunAction(invalid));
 Console.WriteLine($"PASS all {checks} contract checks");
 return 0;

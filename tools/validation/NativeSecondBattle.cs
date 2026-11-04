@@ -22,10 +22,10 @@ internal static partial class NativeModRunLoop
 
     public static void VerifySecondRewardCard(CardModel card)
     {
-        if(!SecondBattleEnabled||Phase!="second-battle"||card.Id.Entry!="MANA_SHIELD")return;
+        if(!SecondBattleEnabled||Phase!="second-battle"||ExpectedSecondReward is null||card.Id!=ExpectedSecondReward.Id)return;
         var native=card.Owner.PlayerCombatState!;
         if(ExpectedSecondReward==null||!ReferenceEquals(card.DeckVersion,ExpectedSecondReward)||!native.Hand.Cards.Contains(card))
-            throw new PredictionUnsupportedException("ManaShield play is not the naturally drawn, actually acquired reward card.");
+            throw new PredictionUnsupportedException("Reward play is not the naturally drawn, actually acquired reward card.");
         RewardPlayProvenance.Add(new {turn=native.TurnNumber,card=card.Id.ToString(),deckVersion=card.DeckVersion!.Id.ToString(),inNativeHand=true,actualRewardReferenceMatched=true,
             energyBefore=native.Energy,manaBefore=JsonSerializer.SerializeToElement(ManaState(card.Owner),Json)});
     }
@@ -59,7 +59,7 @@ internal static partial class NativeModRunLoop
         var decisions=new List<object>();
         var elapsed=Stopwatch.StartNew();
         var bounds=new DecisionBounds();
-        bool shieldPlayed=false;int? shieldDrawTurn=null;
+        bool shieldPlayed=false;int? shieldDrawTurn=null;bool essencePlayed=false;
         string status="unsupported";string? reason="Bounded second-battle plan did not reach a terminal state.";
         object? failure=null;
         object lastConfirmedBoundary=EleanorV040Probe.CaptureNextNativeBoundary(combat);
@@ -67,8 +67,8 @@ internal static partial class NativeModRunLoop
         var routeJson=new JsonSerializerOptions(Json){PropertyNamingPolicy=JsonNamingPolicy.CamelCase};routeJson.Converters.Add(new JsonStringEnumConverter());
         try
         {
-        if(acquired!=null&&acquired.Id.Entry!="MANA_SHIELD")
-            throw new PredictionUnsupportedException($"The declared acquired-card coverage policy only supports ManaShield; native reward was {acquired.Id}.");
+        if(acquired!=null&&acquired.Id.Entry is not ("MANA_SHIELD" or "RETURN_FLOW" or "MANA_CONVERSION_PRINCIPLE"))
+            throw new PredictionUnsupportedException($"The declared acquired-card coverage policy does not support {acquired.Id}.");
         for(int index=0;index<(online||frozenOne?NativeCombatDecision.MaxDecisions:12);index++)
         {
             executionStage="before-query";
@@ -91,18 +91,19 @@ internal static partial class NativeModRunLoop
                 try{_=ticket.Consume(combat);}catch(InvalidOperationException){duplicateTicketRejected=true;}
                 if(!duplicateTicketRejected)throw new InvalidOperationException("Decision ticket was executable twice.");
             }
-            else if(acquired!=null&&!shieldPlayed)
+            else if(acquired!=null&&(!shieldPlayed||(acquired.Id.Entry=="MANA_CONVERSION_PRINCIPLE"&&!essencePlayed)))
             {
                 // Coverage policy: defend and draw naturally until the actually acquired card is in hand.
                 // No draw-order, HP, energy or mana setter is used.
                 var native=player.PlayerCombatState;
-                var shield=native.Hand.Cards.FirstOrDefault(c=>ReferenceEquals(c.DeckVersion,acquired));
+                var shield=shieldPlayed?native.Hand.Cards.FirstOrDefault(c=>c.GetType().Name=="ManaEssence"):
+                    native.Hand.Cards.FirstOrDefault(c=>ReferenceEquals(c.DeckVersion,acquired));
                 var prefix=new List<JsonElement>();
-                if(shield!=null)
-                    prefix.Add(Action("PlayCard",native.TurnNumber,shield.Id.Entry));
+                if(shield!=null && native.Energy >= (shield.GetType().Name=="ManaEssence"?0:1))
+                    prefix.Add(EleanorV040Probe.BuildRewardAction(combat,shield));
                 else
                 {
-                    if(native.TurnNumber>5){reason="Acquired ManaShield not naturally drawn within the bounded coverage prefix.";break;}
+                    if(native.TurnNumber>5){status="budget-exceeded";reason="Acquired reward/dependency not naturally playable within the bounded coverage prefix.";break;}
                     foreach(var card in native.Hand.Cards.Where(c=>c.Id.Entry is "DEFEND_IRONCLAD" or "MANA_GATHER").Take(3))
                         prefix.Add(Action("PlayCard",native.TurnNumber,card.Id.Entry));
                     prefix.Add(Action("EndTurn",native.TurnNumber,""));
@@ -133,17 +134,18 @@ internal static partial class NativeModRunLoop
             if(ticket!=null)decisions.Add(new {index=index+1,query=ticket.Evidence,executedActionCount=actions.Length,duplicateTicketRejected,
                 verifiedStatus=replay.GetProperty("status").GetString(),steps=replay.GetProperty("steps").GetArrayLength()});
             foreach(var step in replay.GetProperty("steps").EnumerateArray())
-                if(step.GetProperty("cardId").GetString()=="MANA_SHIELD"&&step.GetProperty("nativeAccepted").GetBoolean())
+                if(step.GetProperty("cardId").GetString()==acquired?.Id.Entry&&step.GetProperty("nativeAccepted").GetBoolean())
                 {
                     shieldPlayed=true;shieldDrawTurn ??= step.GetProperty("turn").GetInt32();
                     // The native action resolver picked this card from the actual hand, with a DeckVersion
                     // that is verified at handoff and a single ManaShield in the permanent deck.
                 }
+            essencePlayed |= replay.GetProperty("steps").EnumerateArray().Any(s=>s.GetProperty("cardId").GetString()=="MANA_ESSENCE"&&s.GetProperty("nativeAccepted").GetBoolean());
             string result=replay.GetProperty("status").GetString()!;
             if(result=="passed")
             {
-                status=acquired==null||shieldPlayed?"passed":"failed";
-                reason=status=="passed"?null:"Victory occurred without the required acquired ManaShield play.";
+                status=acquired==null||(shieldPlayed&&(acquired.Id.Entry!="MANA_CONVERSION_PRINCIPLE"||essencePlayed))?"passed":"failed";
+                reason=status=="passed"?null:"Victory occurred without the required acquired reward/dependency play.";
                 break;
             }
             if(result!="boundary"){status=result;reason=replay.GetProperty("stopReason").GetString();break;}
@@ -163,8 +165,8 @@ internal static partial class NativeModRunLoop
             decisionScope="second combat only; first battle uses its separately recorded route",decisions,
             decisionBounds=new {maxDecisions=online||frozenOne?NativeCombatDecision.MaxDecisions:12,maxTurns=NativeCombatDecision.MaxTurns,
                 elapsedStopSeconds=online?NativeCombatDecision.ElapsedStopSeconds:(int?)null,elapsedStopSemantics="checked before a query; each native action drain retains its own 45-second timeout"},
-            coveragePolicy="natural generated route; when taking ManaShield, defend/draw without attacks until it is actually in hand, then play it before the remaining native plan",
-            naturalCardOrderUnchanged=true,acquiredCard=acquired?.Id.ToString(),shieldPlayed,shieldDrawTurn,rewardPlayProvenance=RewardPlayProvenance,
+            coveragePolicy="natural reward draw; bounded choice enumeration for actual acquired card, then actual generated Essence when applicable, followed by bounded Evaluate routes",
+            naturalCardOrderUnchanged=true,acquiredCard=acquired?.Id.ToString(),shieldPlayed,shieldDrawTurn,rewardPlayed=shieldPlayed,essencePlayed,rewardPlayProvenance=RewardPlayProvenance,
             planPath,planSha256=Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(planPath))),
             chunks=reports,trace=reports.Select(r=>new {opening=r.GetProperty("nativeOpeningRoot"),openingContinuation=r.GetProperty("nativeOpeningContinuation"),steps=r.GetProperty("steps")}).ToArray(),
             terminal=status=="passed"?"Victory":status,playerHp=player.Creature.CurrentHp};

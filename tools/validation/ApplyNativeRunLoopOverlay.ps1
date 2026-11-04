@@ -36,6 +36,11 @@ $s = $s.Replace($anchor, @'
                 payload["shieldBoundary"] = EleanorV040Probe.RunManaShieldBoundary(combat!,loop,options.OutputDirectory);
                 return 0;
             }
+            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SIMULATORLAB_REWARD_CASE")))
+            {
+                payload["rewardBoundary"] = EleanorV040Probe.RunRewardBoundary(combat!,loop,options.OutputDirectory,options);
+                return 0;
+            }
 '@ + "`n" + $anchor)
 $s = $s.Replace($anchor, '            if (NativeModRunLoop.RecordFixtureEnabled) NativeModRunLoop.RecordingFixture = EleanorV040Probe.AddRecordingResetFixture(combat!, loop);' + "`n" + $anchor)
 $anchor = '                if (Environment.GetEnvironmentVariable("SIMULATORLAB_ELEANOR_V041_VICTORY_REPLAY") == "1")'

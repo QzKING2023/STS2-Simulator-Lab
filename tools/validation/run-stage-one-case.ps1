@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][string]$HarnessRoot,[Parameter(Mandatory)][string]$Case,[Parameter(Mandatory)][string]$OutputDirectory,[int]$Nodes=1000)
+param([Parameter(Mandatory)][string]$HarnessRoot,[Parameter(Mandatory)][string]$Case,[Parameter(Mandatory)][string]$OutputDirectory,[int]$Nodes=1000,[string]$RewardCase='')
 $ErrorActionPreference='Stop'
 $labRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $harness=[IO.Path]::GetFullPath($HarnessRoot)
@@ -16,7 +16,7 @@ $variables=@{
 SIMULATORLAB_ELEANOR_MOD='1';SIMULATORLAB_ELEANOR_MOD_DLL=(Join-Path $pin 'MyMod.dll');SIMULATORLAB_ELEANOR_BASELIB_DLL=(Join-Path $pin 'dependencies/BaseLib.dll');
 SIMULATORLAB_ELEANOR_MANIFEST=(Join-Path $pin 'MyMod.json');SIMULATORLAB_ELEANOR_MOD_VERSION='v0.4.1-forms-cardpool.fix';SIMULATORLAB_ELEANOR_V040_PROBE='1';SIMULATORLAB_ELEANOR_V040_FORM='Reverse';
 SIMULATORLAB_NATIVE_PROFILE=(Join-Path $labRoot '.build/pinned-inputs/eleanor-v041-native-bootstrap');SIMULATORLAB_NATIVE_LOOP_STAGE='Loop';SIMULATORLAB_NATIVE_SECOND_BATTLE='0';
-SIMULATORLAB_SHIELD_FIXTURE='0';SIMULATORLAB_NATIVE_RECORD_FIXTURE='0';SIMULATORLAB_STAGE_ONE_CASE=$Case
+SIMULATORLAB_SHIELD_FIXTURE='0';SIMULATORLAB_NATIVE_RECORD_FIXTURE='0';SIMULATORLAB_STAGE_ONE_CASE=$(if($RewardCase){''}else{$Case});SIMULATORLAB_REWARD_CASE=$RewardCase
 }
 $previous=@{};foreach($key in $variables.Keys){$previous[$key]=[Environment]::GetEnvironmentVariable($key);[Environment]::SetEnvironmentVariable($key,$variables[$key])}
 try{
