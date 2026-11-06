@@ -1,0 +1,24 @@
+{
+  "modId": "fixture.mod.shuffled",
+  "displayName": "Synthetic Mod Shuffled",
+  "version": "1.0.0",
+  "targetGameVersion": "0.111.0",
+  "sourcePath": "fixture/normal-shuffled.json",
+  "files": [
+    { "path": "fixture.mod.pck", "present": true },
+    { "path": "fixture.mod.json", "present": true }
+  ],
+  "dependencies": [],
+  "resolvedDependencyIds": [],
+  "objects": [
+    { "kind": "Reward", "id": "fixture.reward", "name": "Fixture Reward", "contentIds": ["fixture.card"], "resourceResults": [{ "resourceId": "gold", "amount": 25, "reason": "fixture reward" }] },
+    { "kind": "Event", "id": "fixture.event", "name": "Fixture Event", "optionIds": ["leave", "accept"] },
+    { "kind": "Encounter", "id": "fixture.encounter", "name": "Fixture Encounter", "enemyIds": ["fixture.enemy"] },
+    { "kind": "Enemy", "id": "fixture.enemy", "name": "Fixture Enemy", "intentIds": ["attack"] },
+    { "kind": "Power", "id": "fixture.power", "name": "Fixture Power", "duration": 2 },
+    { "kind": "Relic", "id": "fixture.relic", "name": "Fixture Relic" },
+    { "kind": "Card", "id": "fixture.card", "name": "Fixture Card", "description": "A deterministic card.", "cost": 1, "resourceResults": [{ "resourceId": "damage", "amount": 6, "reason": "fixture card" }] },
+    { "kind": "Character", "id": "fixture.character", "name": "Fixture Character", "startingCardIds": ["fixture.card"], "startingRelicIds": ["fixture.relic"], "powerIds": ["fixture.power"] }
+  ],
+  "resourceResults": [{ "resourceId": "stars", "amount": 1, "reason": "fixture completion" }]
+}

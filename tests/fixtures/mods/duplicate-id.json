@@ -1,0 +1,12 @@
+{
+  "modId": "fixture.duplicate-id",
+  "displayName": "Duplicate ID",
+  "version": "1.0.0",
+  "targetGameVersion": "0.111.0",
+  "sourcePath": "fixture/duplicate-id.json",
+  "files": [{ "path": "fixture.json", "present": true }],
+  "objects": [
+    { "kind": "Relic", "id": "fixture.duplicate", "name": "First" },
+    { "kind": "Power", "id": "fixture.duplicate", "name": "Second" }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "modId": "fixture.missing-file",
+  "displayName": "Missing File",
+  "version": "1.0.0",
+  "targetGameVersion": "0.111.0",
+  "sourcePath": "fixture/missing-file.json",
+  "files": [{ "path": "missing.pck", "present": false }],
+  "objects": []
+}

@@ -1,0 +1,83 @@
+{
+  "modId": "fixture.mod",
+  "displayName": "Synthetic Mod",
+  "version": "1.0.0",
+  "targetGameVersion": "0.111.0",
+  "sourcePath": "fixture/normal.json",
+  "files": [
+    { "path": "fixture.mod.json", "present": true },
+    { "path": "fixture.mod.pck", "present": true }
+  ],
+  "dependencies": [],
+  "resolvedDependencyIds": [],
+  "objects": [
+    {
+      "kind": "Character",
+      "id": "fixture.character",
+      "name": "Fixture Character",
+      "startingCardIds": ["fixture.card"],
+      "startingRelicIds": ["fixture.relic"],
+      "powerIds": ["fixture.power"]
+    },
+    {
+      "kind": "Card",
+      "id": "fixture.card",
+      "name": "Fixture Card",
+      "description": "A deterministic card.",
+      "cost": 1,
+      "hooks": [
+        { "id": "fixture.card.played", "hookPoint": "OnCardPlayed", "description": "Card play trigger." }
+      ],
+      "resourceResults": [
+        { "resourceId": "damage", "amount": 6, "reason": "fixture card" }
+      ]
+    },
+    {
+      "kind": "Relic",
+      "id": "fixture.relic",
+      "name": "Fixture Relic",
+      "hooks": [
+        { "id": "fixture.relic.combat-start", "hookPoint": "OnCombatStart", "description": "Combat start trigger." }
+      ]
+    },
+    {
+      "kind": "Power",
+      "id": "fixture.power",
+      "name": "Fixture Power",
+      "duration": 2,
+      "hooks": [
+        { "id": "fixture.power.turn-end", "hookPoint": "OnTurnEnd", "description": "Turn end trigger." }
+      ]
+    },
+    {
+      "kind": "Enemy",
+      "id": "fixture.enemy",
+      "name": "Fixture Enemy",
+      "intentIds": ["attack"]
+    },
+    {
+      "kind": "Encounter",
+      "id": "fixture.encounter",
+      "name": "Fixture Encounter",
+      "enemyIds": ["fixture.enemy"]
+    },
+    {
+      "kind": "Event",
+      "id": "fixture.event",
+      "name": "Fixture Event",
+      "optionIds": ["accept", "leave"]
+    },
+    {
+      "kind": "Reward",
+      "id": "fixture.reward",
+      "name": "Fixture Reward",
+      "contentIds": ["fixture.card"],
+      "resourceResults": [
+        { "resourceId": "gold", "amount": 25, "reason": "fixture reward" }
+      ]
+    }
+  ],
+  "resourceResults": [
+    { "resourceId": "stars", "amount": 1, "reason": "fixture completion" }
+  ]
+}

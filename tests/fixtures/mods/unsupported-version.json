@@ -1,0 +1,9 @@
+{
+  "modId": "fixture.unsupported-version",
+  "displayName": "Unsupported Version",
+  "version": "1.0.0",
+  "targetGameVersion": "0.110.0",
+  "sourcePath": "fixture/unsupported-version.json",
+  "files": [{ "path": "fixture.json", "present": true }],
+  "objects": []
+}

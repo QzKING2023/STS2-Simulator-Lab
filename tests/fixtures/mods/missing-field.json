@@ -1,0 +1,9 @@
+{
+  "modId": "fixture.missing-field",
+  "displayName": "Missing Field",
+  "version": "1.0.0",
+  "targetGameVersion": "0.111.0",
+  "sourcePath": "fixture/missing-field.json",
+  "files": [{ "path": "fixture.json", "present": true }],
+  "objects": [{ "kind": "Card", "id": "fixture.card", "cost": 1 }]
+}

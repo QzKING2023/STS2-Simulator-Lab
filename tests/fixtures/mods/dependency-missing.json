@@ -1,0 +1,11 @@
+{
+  "modId": "fixture.dependency-missing",
+  "displayName": "Dependency Missing",
+  "version": "1.0.0",
+  "targetGameVersion": "0.111.0",
+  "sourcePath": "fixture/dependency-missing.json",
+  "files": [{ "path": "fixture.json", "present": true }],
+  "dependencies": [{ "modId": "fixture.base", "minimumVersion": "1.0.0" }],
+  "resolvedDependencyIds": [],
+  "objects": []
+}
