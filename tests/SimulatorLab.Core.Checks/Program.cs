@@ -1,5 +1,6 @@
 using System.Text.Json;
 using SimulatorLab.Core;
+using SimulatorLab.Core.Mods;
 
 if (args.Length == 2 && args[0] == "--validate-case")
 {
@@ -309,5 +310,20 @@ Check("native action equality ignores only JSON formatting",NativeDecisionTicket
 Check("native action equality rejects additional fields",!NativeDecisionTicket.SameActionJson("{\"kind\":\"EndTurn\"}","{\"kind\":\"EndTurn\",\"NestedChoices\":[0]}"));
 foreach(var invalid in new Action[]{()=>new NativeDecisionTicket(source,1,"state-a","PlayCard").Consume(new object(),1,"state-a","PlayCard"),()=>new NativeDecisionTicket(source,1,"state-a","PlayCard").Consume(source,2,"state-a","PlayCard"),()=>new NativeDecisionTicket(source,1,"state-a","PlayCard").Consume(source,1,"state-b","PlayCard"),()=>new NativeDecisionTicket(source,1,"state-a","PlayCard").Consume(source,1,"state-a","EndTurn")})
     Check("native ticket rejects source/sequence/state/action mismatch",RejectsRunAction(invalid));
+var snapshotRoot = Path.GetFullPath("local-mods/workshop-snapshot-20261106-163352");
+var snapshotManifest = snapshotRoot + ".manifest.json";
+var modCatalogA = ModCatalogParser.Parse(snapshotRoot, snapshotManifest);
+var modCatalogB = ModCatalogParser.Parse(snapshotRoot, snapshotManifest);
+Check("mod catalog discovers 21 sources and 24 manifests", modCatalogA.Sources.Count == 21 && modCatalogA.Manifests.Count == 24 && modCatalogA.Errors.Count == 0);
+Check("mod catalog fixes target game version", modCatalogA.TargetGameVersion == "0.111.0");
+Check("mod catalog recognizes BaseLib RitsuLib MinionLib Watcher", new[] { "BaseLib", "STS2-RitsuLib", "MinionLib", "Watcher" }.All(id => modCatalogA.Manifests.Any(m => m.ModId == id)));
+Check("mod catalog selects all RitsuLib compatibility directories", modCatalogA.Manifests.Single(m => m.ModId == "STS2-RitsuLib").CompatibilityVariants.Select(v => v.TargetGameVersion).SequenceEqual(new[] { "0.107.1", "0.109.0", "0.110.0", "0.111.0" }));
+Check("mod catalog recognizes YukiMakoto exact target variant", modCatalogA.Manifests.Single(m => m.ModId == "YukiMakoto").CompatibilityVariants.Any(v => v.TargetGameVersion == "0.111.0"));
+Check("mod catalog repeat parse is deterministic", modCatalogA.ModelSummary == modCatalogB.ModelSummary && modCatalogA.InputHash == modCatalogB.InputHash && modCatalogA.Errors.Select(e => e.ToString()).SequenceEqual(modCatalogB.Errors.Select(e => e.ToString())));
+var missingCatalog = ModCatalogParser.Parse(Path.Combine(".build", "missing-mod-snapshot"), Path.Combine(".build", "missing-mod-snapshot.manifest.json"));
+Check("mod catalog reports missing files with stable code", missingCatalog.Errors.All(e => e.Code == ModCatalogErrorCode.MissingFile));
 Console.WriteLine($"PASS all {checks} contract checks");
 return 0;
+
+
+
