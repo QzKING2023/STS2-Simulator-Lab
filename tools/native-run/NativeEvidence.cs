@@ -179,6 +179,7 @@ internal static class NativeEvidence
             }
             if(report.GetProperty("rawExit").GetInt32()!=0||process.GetProperty("rawExit").GetInt32()!=0||!process.GetProperty("exitConsistent").GetBoolean()||process.GetProperty("buildId").GetString()!=buildId||report.GetProperty("result").GetProperty("Confirmed").GetInt32()!=confirm)throw new NativeDataException("Contradictory result/exit/counter/build");
             contract.Finish(seal,report,process);
+            if(NativeVisibleBattle.IsScenario(contract.Scenario.Scenario))NativeVisibleBattle.Review(directory);
             if(NativeSolverBattle.IsScenario(contract.Scenario.Scenario))NativeSolverBattleContract.Review(directory);
             if(NativeSolverRun.IsScenario(contract.Scenario.Scenario))NativeSolverRunContract.Review(directory);
             if(NativeSolverJourney.IsScenario(contract.Scenario.Scenario))NativeSolverJourneyContract.Review(directory);

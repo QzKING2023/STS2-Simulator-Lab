@@ -320,8 +320,61 @@ Check("mod catalog recognizes BaseLib RitsuLib MinionLib Watcher", new[] { "Base
 Check("mod catalog selects all RitsuLib compatibility directories", modCatalogA.Manifests.Single(m => m.ModId == "STS2-RitsuLib").CompatibilityVariants.Select(v => v.TargetGameVersion).SequenceEqual(new[] { "0.107.1", "0.109.0", "0.110.0", "0.111.0" }));
 Check("mod catalog recognizes YukiMakoto exact target variant", modCatalogA.Manifests.Single(m => m.ModId == "YukiMakoto").CompatibilityVariants.Any(v => v.TargetGameVersion == "0.111.0"));
 Check("mod catalog repeat parse is deterministic", modCatalogA.ModelSummary == modCatalogB.ModelSummary && modCatalogA.InputHash == modCatalogB.InputHash && modCatalogA.Errors.Select(e => e.ToString()).SequenceEqual(modCatalogB.Errors.Select(e => e.ToString())));
-var missingCatalog = ModCatalogParser.Parse(Path.Combine(".build", "missing-mod-snapshot"), Path.Combine(".build", "missing-mod-snapshot.manifest.json"));
-Check("mod catalog reports missing files with stable code", missingCatalog.Errors.All(e => e.Code == ModCatalogErrorCode.MissingFile));
+var dependencyResolution = DependencyResolver.Resolve(modCatalogA);
+Check("dependency resolver closes BaseLib RitsuLib MinionLib", new[] { "BaseLib", "STS2-RitsuLib", "MinionLib" }.All(dependencyResolution.DependencyClosure.Contains));
+Check("dependency resolver selects exact RitsuLib and YukiMakoto variants", dependencyResolution.SelectedVariants.Any(v => v.ModId == "STS2-RitsuLib" && v.RelativeDirectory == "compat/0.111.0") && dependencyResolution.SelectedVariants.Any(v => v.ModId == "YukiMakoto" && v.RelativeDirectory == "lib/0.111.0"));
+var loadOrder = dependencyResolution.LoadOrder.ToList();
+Check("dependency resolver keeps dependency before dependent", loadOrder.IndexOf("BaseLib") < loadOrder.IndexOf("Watcher") && loadOrder.IndexOf("STS2-RitsuLib") < loadOrder.IndexOf("YukiMakoto"));
+Check("dependency resolver reports no errors for required graph", dependencyResolution.IsSuccess);
+var watcher = modCatalogA.Manifests.Single(m => m.ModId == "Watcher");
+var missingWatcher = watcher with { Dependencies = [new ModDependency("NoSuchMod", null, null)] };
+var missingCatalog = modCatalogA with { Manifests = modCatalogA.Manifests.Select(m => m.ModId == "Watcher" ? missingWatcher : m).ToList() };
+Check("dependency resolver reports missing dependency", DependencyResolver.Resolve(missingCatalog, ["Watcher"]).Diagnostics.Any(d => d.Code == ModCatalogErrorCode.DependencyMissing));
+var cycleBase = modCatalogA.Manifests.Single(m => m.ModId == "BaseLib");
+var cycleCatalog = modCatalogA with { Manifests = modCatalogA.Manifests.Select(m => m.ModId == "BaseLib" ? cycleBase with { Dependencies = [new ModDependency("Watcher", null, null)] } : m).ToList() };
+var cycleResolution = DependencyResolver.Resolve(cycleCatalog, ["Watcher"]);
+Check("dependency resolver reports cycle as runtime failure", cycleResolution.Cycles.Count > 0 && cycleResolution.Diagnostics.Any(d => d.Code == ModCatalogErrorCode.RuntimeFailure));
+var minimumCatalog = modCatalogA with { Manifests = modCatalogA.Manifests.Select(m => m.ModId == "Watcher" ? watcher with { Dependencies = [new ModDependency("BaseLib", "99.0.0", "99.0.0")] } : m).ToList() };
+Check("dependency resolver reports minimum version mismatch", DependencyResolver.Resolve(minimumCatalog, ["Watcher"]).Diagnostics.Any(d => d.Code == ModCatalogErrorCode.UnsupportedVersion));
+var noCompatCatalog = modCatalogA with { Manifests = modCatalogA.Manifests.Select(m => m.ModId == "STS2-RitsuLib" ? m with { CompatibilityVariants = m.CompatibilityVariants.Where(v => v.TargetGameVersion != "0.111.0").ToList() } : m).ToList() };
+Check("dependency resolver reports missing exact compatibility variant", DependencyResolver.Resolve(noCompatCatalog, ["STS2-RitsuLib"]).Diagnostics.Any(d => d.Code == ModCatalogErrorCode.UnsupportedVersion));
+var perturbedCatalog = modCatalogA with { Manifests = modCatalogA.Manifests.Reverse().ToList() };
+var perturbedResolution = DependencyResolver.Resolve(perturbedCatalog);
+Check("dependency graph output is stable under manifest order perturbation", JsonSerializer.Serialize(dependencyResolution) == JsonSerializer.Serialize(perturbedResolution));
+var missingFileCatalog = ModCatalogParser.Parse(Path.Combine(".build", "missing-mod-snapshot"), Path.Combine(".build", "missing-mod-snapshot.manifest.json"));
+Check("mod catalog reports missing files with stable code", missingFileCatalog.Errors.All(e => e.Code == ModCatalogErrorCode.MissingFile));
+var adapterFixtureRoot = Path.Combine("tests", "fixtures", "mods");
+var adapterRegistry = new ModDefinitionRegistry();
+var normalAdapter = ModAdapterConverter.ConvertJson(File.ReadAllText(Path.Combine(adapterFixtureRoot, "normal.json")), "fixture/normal.json", adapterRegistry);
+Check("adapter normal fixture enters all standard models", normalAdapter.IsSuccess && normalAdapter.Model is { Characters.Count: 1, Cards.Count: 1, Relics.Count: 1, Powers.Count: 1, Enemies.Count: 1, Encounters.Count: 1, Events.Count: 1, Rewards.Count: 1 } && normalAdapter.Model.ResourceResults.Count == 3);
+Check("adapter normal fixture commits atomically", normalAdapter.Report.RegistryCommitted && adapterRegistry.PackageCount == 1 && adapterRegistry.DefinitionCount == 8);
+Check("adapter normal fixture sorts definition ids", normalAdapter.Model is not null && normalAdapter.Model.AllIds.SequenceEqual(normalAdapter.Model.AllIds.OrderBy(x => x, StringComparer.Ordinal)));
+var shuffledAdapter = ModAdapterConverter.ConvertJson(File.ReadAllText(Path.Combine(adapterFixtureRoot, "normal-shuffled.json")), "fixture/normal-shuffled.json", new ModDefinitionRegistry());
+Check("adapter shuffled fixture is normalized deterministically", shuffledAdapter.IsSuccess && shuffledAdapter.Model is not null && shuffledAdapter.Model.AllIds.SequenceEqual(shuffledAdapter.Model.AllIds.OrderBy(x => x, StringComparer.Ordinal)) && shuffledAdapter.Model.Events.Single().OptionIds.SequenceEqual(["accept", "leave"]));
+var normalRepeatA = ModAdapterConverter.ConvertJson(File.ReadAllText(Path.Combine(adapterFixtureRoot, "normal.json")), "fixture/normal.json", new ModDefinitionRegistry());
+var normalRepeatB = ModAdapterConverter.ConvertJson(File.ReadAllText(Path.Combine(adapterFixtureRoot, "normal.json")), "fixture/normal.json", new ModDefinitionRegistry());
+Check("adapter repeated conversion summary is stable", normalRepeatA.Summary == normalRepeatB.Summary && normalRepeatA.Report.DeterminismDigest == normalRepeatB.Report.DeterminismDigest);
+var adapterFailures = new Dictionary<string, AdapterErrorCode>(StringComparer.Ordinal)
+{
+    ["missing-file.json"] = AdapterErrorCode.MissingFile,
+    ["invalid-format.json"] = AdapterErrorCode.InvalidFormat,
+    ["unsupported-version.json"] = AdapterErrorCode.UnsupportedVersion,
+    ["missing-field.json"] = AdapterErrorCode.MissingField,
+    ["invalid-value.json"] = AdapterErrorCode.InvalidValue,
+    ["duplicate-id.json"] = AdapterErrorCode.DuplicateId,
+    ["dependency-missing.json"] = AdapterErrorCode.DependencyMissing
+};
+foreach (var fixture in adapterFailures)
+{
+    var registryBefore = new ModDefinitionRegistry();
+    var fixtureText = File.ReadAllText(Path.Combine(adapterFixtureRoot, fixture.Key));
+    var resultA = ModAdapterConverter.ConvertJson(fixtureText, $"fixture/{fixture.Key}", registryBefore);
+    var resultB = ModAdapterConverter.ConvertJson(fixtureText, $"fixture/{fixture.Key}", new ModDefinitionRegistry());
+    Check($"adapter failure {fixture.Key} has stable classification", resultA.Errors.Any(e => e.Code == fixture.Value) && resultA.Errors.Select(e => e.StableSummary).SequenceEqual(resultB.Errors.Select(e => e.StableSummary)));
+    Check($"adapter failure {fixture.Key} does not pollute registry", !resultA.IsSuccess && registryBefore.Count == 0);
+}
+var allAdapterCodes = AdapterErrorCatalog.AllCodes.Select(AdapterErrorCatalog.StableCode).ToArray();
+Check("adapter error codes are stable and complete", allAdapterCodes.Length == 13 && allAdapterCodes.Distinct(StringComparer.Ordinal).Count() == 13 && AdapterErrorCatalog.AllCodes.Contains(AdapterErrorCode.RuntimeFailure));
 Console.WriteLine($"PASS all {checks} contract checks");
 return 0;
 

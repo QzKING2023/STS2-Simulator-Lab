@@ -10,7 +10,7 @@ using CombatSolver.Engine.InCombat.Simulation;
 namespace OfflineSearchHarness;
 internal static class NativeSolverBattle
 {
- internal static bool IsScenario(string s)=>s is "solver-battle-natural" or "solver-battle-death" or "solver-tainted-lifecycle" or "solver-self-cost" or "solver-power-death";
+ internal static bool IsScenario(string s)=>NativePerformancePilot.IsScenario(s)||s is "solver-battle-natural" or "solver-battle-death" or "solver-tainted-lifecycle" or "solver-self-cost" or "solver-power-death";
  internal static bool MultiScenario(string s)=>NativeSolverRun.IsScenario(s)||NativeSolverJourney.IsScenario(s);
  internal static bool Active=>IsScenario(NativeLifecycle.Scenario)||MultiScenario(NativeLifecycle.Scenario);
 }

@@ -63,6 +63,7 @@ internal static class NativeFullRunContract
   NativeBoundaryContract.Snapshot(report.GetProperty("finalState"),final,"Run progress actual partial final state");
   var budget=report.GetProperty("budget");NativeFullRun.Validate(budget.GetProperty("configuration").Deserialize<NativeFullRun.Limits>(Program.Json));
   var header=records.Single(p=>p.GetProperty("kind").GetString()=="header").GetProperty("detail");
+  NativePerformancePilot.Review(header,records.ToArray());
   int completed=Directory.GetFiles(directory,"solver-query-*.json").Length;
   bool accounting=header.TryGetProperty("queryAccounting",out var mode)&&mode.GetString()=="started-query-events/v1";
   var admitted=records.Where(p=>p.GetProperty("kind").GetString()=="run-query-admitted").Select(p=>p.GetProperty("detail")).ToArray();
@@ -75,6 +76,7 @@ internal static class NativeFullRunContract
   NativeBoundaryContract.Require(reviewed.GetProperty("act").GetInt32()==report.GetProperty("controlledAct").GetInt32()&&reviewed.GetProperty("act").GetInt32()==final.GetProperty("act").GetInt32(),"Required observed act lifecycle matches actual run progress");
   _=NativeSlipperyEvidence.Review(records);_=NativeReflectionsEvidence.Review(records);
   _=NativeRelicPickupEvidence.Review(records);
+  _=NativeAmalgamator.ReviewEvents(records.ToArray());
   _=NativeShopLedgerEvidence.Review(records);
   _=NativeAcceptanceLifecycleEvidence.Review(records);_=NativeEventResourceEvidence.Review(records.ToArray());
   _=NativeSolverPhaseProtocol.Review(directory);

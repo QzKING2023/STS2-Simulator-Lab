@@ -57,6 +57,7 @@ internal static class NativeHost
         NativePreparation.Install();
         NativeRepeatTreasure.Install();
         NativeBossPresentation.Install();
+        NativeAmalgamator.Install();
         NativeCreaturePresentation.Install();
         if(NativeNaturalBoss.Third||NativeFullRun.Active)PatchMethod(HarmonyLib.AccessTools.DeclaredMethod(typeof(MegaCrit.Sts2.Core.MonsterMoves.Intents.StunIntent),"GetStaticHoverTip"),nameof(ThirdStunTip));
         NativeLifecycle.Install();

@@ -34,6 +34,7 @@ internal static class NativeSolverBattleContract
   string T(JsonElement e,string p)=>e.GetProperty(p).GetString()!;int Pos(JsonElement e)=>Array.IndexOf(rows,e);
   var header=rows.Single(r=>K(r)=="header").GetProperty("detail");string scenario=T(header,"scenario");
   Need((NativeSolverBattle.IsScenario(scenario)||NativeSolverBattle.MultiScenario(scenario))&&T(header,"information")=="Oracle","registered Oracle whole-battle scenario");
+  NativePerformancePilot.Review(header,rows);
   var profile=Read("solver-profile.json");Need(T(profile,"information")=="Oracle"&&T(profile,"solverVersion")=="0.50.1"&&!profile.GetProperty("nativeOnly").GetBoolean()&&!profile.GetProperty("entryInitializeCalled").GetBoolean()&&!profile.GetProperty("settingsLoadSaveCalled").GetBoolean()&&!profile.GetProperty("extraSearchPatches").GetBoolean(),"isolated pinned profile");
   Need(rows.Count(r=>K(r)=="fixture-setup-declared")== (scenario=="solver-battle-death"?1:0),"accurate fixture origin");
   var opening=rows.Single(r=>K(r)=="solver-battle-opening");var end=partial?default:rows.Single(r=>K(r)=="solver-battle-complete");var ef=partial?default:F(end);

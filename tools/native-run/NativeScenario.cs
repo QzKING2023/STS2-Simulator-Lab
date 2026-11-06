@@ -14,7 +14,7 @@ internal sealed record NativeScenario(string Scenario,string ScenarioKind,string
         if(inputControl is not ("" or "root-extra" or "unknown-choice-field" or "missing-choice-file" or "invalid-route"))throw new ArgumentException("Unknown input control");
         if(inputControl=="invalid-route"&&!replay)throw new ArgumentException("Invalid-route control requires explicit replay input");
         var parts=scenario.Split(':');bool natural=scenario is "slice-skip" or "slice-take" or "natural-death" or "slice-solver-gate" or "slice-solver-loop";
-        natural|=NativeSolverRun.IsScenario(scenario)||scenario=="rooms-natural"||scenario=="merchant-natural"||scenario=="solver-battle-natural";
+        natural|=NativeVisibleBattle.IsScenario(scenario)||NativePerformancePilot.IsScenario(scenario)||NativeSolverRun.IsScenario(scenario)||scenario=="rooms-natural"||scenario=="merchant-natural"||scenario=="solver-battle-natural";
         natural|=scenario=="rewards-natural"||scenario=="merchant-natural-relic";
         bool fixture=NativeEventFixtures.Scenarios.Contains(scenario)||scenario=="solver-battle-death"||NativeSolverOnline.IsScenario(scenario)||Fixtures.Contains(scenario)||scenario is "tail-next-act" or "tail-architect"||NativeRooms.IsFixture(scenario);
         bool fault=scenario is "event-fault" or "sink" or "quota" or "softlock" or "tail-architect-prefix-fault" or "tail-architect-win-fault" or "natural-death-budget" or "natural-death-fault" || parts.Length==2&&Fixtures.Contains(parts[0])&&Faults.Contains(parts[1]);
@@ -27,7 +27,7 @@ internal sealed record NativeScenario(string Scenario,string ScenarioKind,string
         fixture|=NativeRewardProbe.Fixtures.Contains(scenario)||NativeMerchant.Fixtures.Contains(scenario);fault|=NativeRewardProbe.Faults.Contains(scenario)||NativeMerchant.Faults.Contains(scenario);
         if(!natural&&!fixture&&!fault)throw new ArgumentException("Unregistered native scenario");
         if(branch&&(!replay||scenario!="major-natural-act3-route"))throw new ArgumentException("Branch scenario provenance");
-        return new(scenario,fault||hostControl!=""||inputControl!=""?"fault-control":natural?"natural-run":"api-fixture",NativeSolverCoordinator.IsScenario(scenario)?(scenario.EndsWith("-replay")?"frozen-prefix-and-tail-replay":(NativeSolverCoordinator.Configuration?.PrefixCount==0?"live":"prefix-replay/live-tail")):branch?"prefix-branch":mode!="detailed"?"observation-control":replay?"frozen-replay":"live",mode,hostControl,inputControl,replay,branch);
+        return new(scenario,fault||hostControl!=""||inputControl!=""?"fault-control":natural?"natural-run":"api-fixture",NativeSolverCoordinator.IsScenario(scenario)?(scenario.EndsWith("-replay")?"frozen-prefix-and-tail-replay":(NativePerformancePilot.IsScenario(scenario)||NativeSolverCoordinator.Configuration?.PrefixCount==0?"live":"prefix-replay/live-tail")):branch?"prefix-branch":mode!="detailed"?"observation-control":replay?"frozen-replay":"live",mode,hostControl,inputControl,replay,branch);
     }
     internal static NativeScenario Read(JsonElement e)=>e.Deserialize<NativeScenario>(Program.Json)??throw new NativeDataException("Missing provenance");
 }

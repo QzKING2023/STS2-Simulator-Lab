@@ -166,6 +166,10 @@ internal static partial class Program
             int dispatchBeforeStale=dispatched;bool staleRejected=false;try{stale.Consume(combat);}catch(NativeActionRejectedException){staleRejected=true;}
             Write((extended?"solver-online-step-":"solver-loop-step-")+query+".json",new{query,action,children,coordinator=ticket.Coordinator,staticPreviewApproximate=ticket.StaticPreviewApproximate,predictionScope="current executed step; future static preview may be approximate",shadowPredictionGaps=shadowGaps,searchBoundary=ticket.SearchBoundary,incompleteSearch=ticket.IncompleteSearch,root=NativeEvidence.Root,context=NativeEvidence.Context,card=card==null?null:Id(card),target=target==null?null:Id(target),nativeBefore=before,nativeAfter=after,expected,actual,exact=expected==actual,parentUnchanged=parentBefore==Stamp(parent),consumedRejected,staleRejected,unconsumedAtRejection=!stale.Used,zeroAdditionalDispatch=dispatchBeforeStale==dispatched,oldSequence=stale.Sequence,currentSequence=sequence});
             if(expected!=actual)throw new NativeDataException("Solver/native loop differential mismatch at "+query);
+            if(parentBefore!=Stamp(parent)){
+                Write("solver-parent-failure-"+query+".json",new{query,before=parentBefore,after=Stamp(parent),scope="after actual native execution/cleanup; pre-dispatch parent/native purity check passed"});
+                throw new NativeDataException("Solver parent continuation changed after native execution at "+query);
+            }
             if(!staleRejected||stale.Used||dispatchBeforeStale!=dispatched)throw new NativeDataException("Unconsumed stale loop ticket accepted");
             return new(action,card?.Type==CardType.Attack&&target!=null,children.Length>0,potion!=null,predictedTerminal?.Outcome.ToString());
     }

@@ -31,6 +31,7 @@ internal static partial class Program
     }
     static CombatRootSnapshot SolverCapture(CombatState combat,string role,int query)
     {
+        using var captureTiming=NativeTiming.Measure("solver-root-capture-and-purity-check");
         var before=State();var continuation=ContinuationStamp.CaptureLive(combat);
         var root=CombatRootSnapshot.Capture(combat);
         if(!NativeDecisionTicket.SameActionJson(before.GetRawText(),State().GetRawText())||continuation.StateText!=ContinuationStamp.CaptureLive(combat).StateText)throw new NativeDataException("Solver capture mutated native state/RNG");
@@ -49,6 +50,7 @@ internal static partial class Program
         if(CoordinatorTail&&sequence-NativeSolverCoordinator.Configuration!.PrefixCount>=NativeSolverCoordinator.Configuration.MaxActions)throw new TimeoutException("Coordinator online tail action budget reached");
         var root=SolverCapture(combat,"query",query);string before=State().GetRawText();
         SolverBranchControls(root,combat,query);
+        SolverPetControls(root,combat,query);
         var policy=SolverController.CaptureSearchPolicy(SolverSettings.Capture(),combat,false,null);
         bool coordinated=NativeSolverOnline.SmartScenario(scenario)||CoordinatorTail;
         policy=coordinated?policy with{
@@ -59,10 +61,12 @@ internal static partial class Program
         }:policy with{Profile=policy.Profile with{SoftTimeBudgetMilliseconds=5000}};
         int cancelSeconds=coordinated?15:10;
         var names=SolverDisplayNames.Capture(combat);var damage=BattleDamageTracker.Observe(combat);
+        SearchStudy(root,combat,policy,names,damage,query);
         ParallelSettingsProbe(root,combat,policy,names,damage);
         using var cancel=new CancellationTokenSource(TimeSpan.FromSeconds(cancelSeconds));
+        var searchTimer=NativeTiming.Measure("solver-search-wall");
         var task=Task.Run(()=>coordinated?CombatSearchCoordinator.Solve(root,names,damage,policy,cancel.Token,null):new CombatBeamSolver(root,names,damage,policy,cancel.Token,searchProfile:policy.Profile).Solve());
-        try{Await(task,"bounded solver query");}catch(OperationCanceledException){throw new TimeoutException("Solver cooperative query cancellation budget reached");}catch{cancel.Cancel();throw;}var result=task.GetAwaiter().GetResult();
+        try{Await(task,"bounded solver query");}catch(OperationCanceledException){throw new TimeoutException("Solver cooperative query cancellation budget reached");}catch{cancel.Cancel();throw;}finally{searchTimer.Dispose();}var result=task.GetAwaiter().GetResult();
         if(!NativeDecisionTicket.SameActionJson(before,State().GetRawText())||root.ContinuationStamp.StateText!=ContinuationStamp.CaptureLive(combat).StateText)throw new NativeDataException("Search mutated native source or RNG");
         var queryData=System.Text.Json.JsonSerializer.SerializeToElement(new{phaseChoices=NativeFullRun.Active?NativeSolverPhaseProtocol.Capture():null,binding=SolverBinding(combat,root.ContinuationStamp.StateText),branchRuntime=NativeSolverBranchRuntime.Capture(),query,nativeState=State(),root=root.ContinuationStamp.StateText,boundary=result.BoundaryReason.ToString(),result.TotalExpandedNodes,result.ExpandedNodes,actions=result.BestNode.Actions,policy.Profile,engine=coordinated?"CombatSearchCoordinator":"CombatBeamSolver",searchablePotions=root.SearchablePotions.Select(p=>new{p.Slot,p.PotionId}).ToArray(),potionPolicy=policy.PotionPolicy,policy.PotionStrategy,policy.FixedBudget,policy.BudgetOverrideMilliseconds,policy.StopAtAcceptableBattleHpLoss,policy.IgnoreLongTermRewards,policy.PredictPotionReward,result.ExplicitPotionCount,result.PotionHpSaved,result.PotionHpRequired,searchElapsedMilliseconds=result.TotalSearchElapsed.TotalMilliseconds,candidate=new{policy=CoordinatorTail?NativeSolverCoordinator.Policy:NativeSolverJourney.Candidates?NativeSolverCandidateContract.Policy:"strict-boundary/v1",resultScope=result.ResultScope.ToString(),snapshotBoundary=result.Snapshot.BoundaryReason.ToString(),hasRisk=result.Snapshot.HasRisk,playerDead=result.Snapshot.PlayerDead,unmirrored=result.UnmirroredDetails(),forecastUnsupported=result.Forecast.HasUnsupportedIntent,forecastExact=result.Forecast.IsExactForModeledDamage,approximations=result.Forecast.ApproximationDetails},prediction=new{result.StartTurnNumber,result.DeathTurn,result.OnlyDeathRoutesFound,result.CombatEndedTurn,outcome=result.Snapshot.PlayerDead?"Defeat":result.Snapshot.AllEnemiesDead?"Victory":"Ongoing",result.Snapshot.PlayerHp,result.Snapshot.ProjectedPlayerHp},work=new{result.ParallelExpansionWaves,result.ParallelExpansionWorkItems,result.MaxParallelExpansionConcurrency,result.SingleSessionSearch,attributions=result.SearchWorkAttributions,portfolio=result.PortfolioTelemetry},executionPolicy=NativeSolverCoordinator.Configuration?.ExecutionPolicy??"Guarded",stopOnPredictedDeath=NativeSolverCoordinator.StopOnDeath,budget=new{beam=policy.Profile.BeamWidth,nodes=policy.Profile.MaxExpandedNodes,softMilliseconds=policy.Profile.SoftTimeBudgetMilliseconds,cancelSeconds,dop=policy.MaxDegreeOfParallelism,returnedAggregateNodeLimit=CoordinatorTail?NativeSolverCoordinator.ReturnLimit:coordinated?4096:policy.Profile.MaxExpandedNodes},sourceUnchanged=true},Json);
         Write("solver-query-"+query+".json",queryData);

@@ -91,7 +91,7 @@ internal sealed class NativeChoices : ICardSelector
         if(implicitChoice && !chosen.SequenceEqual(implicitResult??[],ReferenceEqualityComparer.Instance))throw new InvalidOperationException("Implicit choice mismatch");
         var response=new NativeChoiceAnswer(id,context,stamp,selected);
         Transcript.Add(new{request,answer=response});
-        Emit("choice-resolved",new{id,selected,implicitChoice,objects=chosen.Select(NativeIdentity.Ref).ToArray()});
+        Emit("choice-resolved",new{id,stamp,selected,implicitChoice,objects=chosen.Select(NativeIdentity.Ref).ToArray()});
         if(source=="CardReward")pendingRewards.Add((id,chosen.Single()));
         if(!implicitChoice)Submitted++;
         if(Fault=="reused")_=Validate(response,id,context,stamp,options.Select(o=>o.handle).ToArray(),min,max);

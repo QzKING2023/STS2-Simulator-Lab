@@ -49,6 +49,7 @@ internal static class NativeSolverFixtureContract
         if(a.GetProperty("TurnStartChoices").ValueKind==JsonValueKind.Array&&a.GetProperty("TurnStartChoices").GetArrayLength()>0){NativeSolverPhaseProtocol.ReviewChildren(rows,step,d,c,input);return;}
         Need(a.GetProperty("NestedChoices").ValueKind==JsonValueKind.Null||a.GetProperty("NestedChoices").GetArrayLength()==0,"no nested choice capability");
         Need(a.GetProperty("NestedChoicesBeforePrimary").GetInt32()==0,"exact primary-only choice set");
+        if(a.GetProperty("Choice").ValueKind==JsonValueKind.Object&&a.GetProperty("Choice").GetProperty("Effect").GetString() is "Discard" or "Duplicate" or "ApplyRetain" or "MoveToDrawTop"){NativeHandDiscardEvidence.Check(rows,step,d,c,input);return;}
             var reqs=rows.Where(r=>Kind(r)=="choice-requested"&&r.GetProperty("root").GetString()==root).ToArray();var children=step.GetProperty("children");
             Need(reqs.Length==(a.GetProperty("Choice").ValueKind==JsonValueKind.Null?0:1)&&children.GetArrayLength()==reqs.Length,"complete native child set");
             if(a.GetProperty("Choice").ValueKind!=JsonValueKind.Null){

@@ -6,9 +6,9 @@ namespace OfflineSearchHarness;
 // Existing native first-act nodes/rewards; replace only the battle policy.
 internal static class NativeSolverJourney
 {
- internal static bool IsScenario(string s)=>NativeSolverCoordinator.IsScenario(s)||s is "solver-native-boss" or "solver-native-budget" or "solver-native-shop";
- internal static bool ShopScenario(string s)=>s=="solver-native-shop"||NativeSolverCoordinator.IsScenario(s);
- internal static bool CandidateScenario(string s)=>s=="solver-native-budget"||ShopScenario(s);
+ internal static bool IsScenario(string s)=>!NativePerformancePilot.IsScenario(s)&&(NativeSolverCoordinator.IsScenario(s)||s is "solver-native-boss" or "solver-native-budget" or "solver-native-shop");
+ internal static bool ShopScenario(string s)=>s=="solver-native-shop"||(!NativePerformancePilot.IsScenario(s)&&NativeSolverCoordinator.IsScenario(s));
+ internal static bool CandidateScenario(string s)=>NativePerformancePilot.IsScenario(s)||s=="solver-native-budget"||ShopScenario(s);
  internal static bool Candidates=>CandidateScenario(NativeLifecycle.Scenario);
  internal static bool Active=>IsScenario(NativeLifecycle.Scenario);
 }

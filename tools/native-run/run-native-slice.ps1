@@ -17,9 +17,10 @@ function CheckBinding {
 }
 CheckBinding
 if($ProcessTimeoutSeconds -gt 120){
- if(!$SolverPlan){throw 'Long process envelope requires an explicit full-run plan'}
+ if(!$SolverPlan){throw 'Long process envelope requires an explicit registered plan'}
  $fullPlan=Get-Content -LiteralPath $SolverPlan -Raw|ConvertFrom-Json
- if($fullPlan.Run.Schema -ne 'native-full-run/v2' -or $fullPlan.Run.WallSeconds -gt 450 -or $fullPlan.Run.WallSeconds+15 -gt $ProcessTimeoutSeconds -or $Scenario -notin @('solver-native-darv-act2','solver-native-darv-act2-replay')){throw 'Invalid long full-run/process budget binding'}
+ $study=$Scenario -eq 'solver-character-pilot' -and $fullPlan.SearchStudy -eq $true -and $null -eq $fullPlan.Run -and $fullPlan.PrefixCount -eq 0 -and $fullPlan.MaxActions -eq 64 -and $ProcessTimeoutSeconds -eq 240
+ if(!$study -and ($fullPlan.Run.Schema -ne 'native-full-run/v2' -or $fullPlan.Run.WallSeconds -gt 450 -or $fullPlan.Run.WallSeconds+15 -gt $ProcessTimeoutSeconds -or $Scenario -notin @('solver-native-darv-act2','solver-native-darv-act2-replay'))){throw 'Invalid long full-run/process budget binding'}
 }
 New-Item -ItemType Directory $out|Out-Null
 Copy-Item $buildPath (Join-Path $out 'build-manifest.json')

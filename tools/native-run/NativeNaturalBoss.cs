@@ -130,7 +130,10 @@ internal static partial class Program
    if(ev is MegaCrit.Sts2.Core.Models.Events.BattlewornDummy)throw new NotSupportedException("Natural nested event requires composed event task contract");
    for(int q=0;!ev.IsFinished&&q<12;q++){
     var parent=run.CurrentRoom;
-    SelectRoomOption(ev.CurrentOptions.Count==1?0:ev is MegaCrit.Sts2.Core.Models.Events.SlipperyBridge bridge?NativeSlipperyBridge.Select(bridge):ev is MegaCrit.Sts2.Core.Models.Events.ThisOrThat or MegaCrit.Sts2.Core.Models.Events.StoneOfAllTime or MegaCrit.Sts2.Core.Models.Events.DenseVegetation or MegaCrit.Sts2.Core.Models.Events.WhisperingHollow or MegaCrit.Sts2.Core.Models.Events.DollRoom or MegaCrit.Sts2.Core.Models.Events.HungryForMushrooms?0:1);
+    int desired=ev.CurrentOptions.Count==1?0:ev is MegaCrit.Sts2.Core.Models.Events.SlipperyBridge bridge?NativeSlipperyBridge.Select(bridge):ev is MegaCrit.Sts2.Core.Models.Events.ThisOrThat or MegaCrit.Sts2.Core.Models.Events.StoneOfAllTime or MegaCrit.Sts2.Core.Models.Events.DenseVegetation or MegaCrit.Sts2.Core.Models.Events.WhisperingHollow or MegaCrit.Sts2.Core.Models.Events.DollRoom or MegaCrit.Sts2.Core.Models.Events.HungryForMushrooms?0:1;
+    if(NativeSolverCoordinator.Configuration?.EventChoiceProfile=="amalgamator-strikes"&&ev is MegaCrit.Sts2.Core.Models.Events.Amalgamator)desired=0;
+    if(NativeSolverCoordinator.Configuration?.EventChoiceProfile=="field-resist"&&ev is MegaCrit.Sts2.Core.Models.Events.FieldOfManSizedHoles)desired=0;
+    SelectRoomOption(desired);
     if(!ReferenceEquals(parent,run.CurrentRoom)){
      var child=run.CurrentRoom as CombatRoom??throw new NotSupportedException("Event changed to unsupported child room");
      if(child.ShouldResumeParentEventAfterCombat)throw new NotSupportedException("Natural event child requires explicit Resume task integration");

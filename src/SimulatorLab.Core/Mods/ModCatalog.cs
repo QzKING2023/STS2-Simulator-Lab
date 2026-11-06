@@ -13,7 +13,8 @@ public static class ModCatalogConstants
 
 public enum ModCatalogErrorCode
 {
-    MissingFile, InvalidFormat, UnsupportedVersion, MissingField, InvalidValue, DuplicateId, PathEscape
+    MissingFile, InvalidFormat, UnsupportedVersion, MissingField, InvalidValue, DuplicateId, PathEscape,
+    DependencyMissing, RuntimeFailure
 }
 
 public sealed record ModCatalogError(ModCatalogErrorCode Code, string Path, string Message)

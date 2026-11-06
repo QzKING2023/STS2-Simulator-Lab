@@ -8,10 +8,10 @@ namespace OfflineSearchHarness;
 internal static class NativeSolverCoordinator
 {
  internal const string Policy="coordinator-one-step/v1";
- internal static bool IsScenario(string s)=>NativeDarv.IsScenario(s)||s is "solver-native-coordinator" or "solver-native-coordinator-replay";
+ internal static bool IsScenario(string s)=>NativePerformancePilot.IsScenario(s)||NativeDarv.IsScenario(s)||s is "solver-native-coordinator" or "solver-native-coordinator-replay";
  internal static bool Active=>IsScenario(NativeLifecycle.Scenario);
  internal static bool Switched;
- internal sealed record Plan(string Schema,int PrefixCount,int MaxActions,bool Probe,string InputSha,string ChoiceSha,string RewardSha,NativeFullRun.Limits? Run=null,int SearchParallelism=1,bool ParallelProbe=false,string ExecutionPolicy="Guarded",int ReturnedAggregateNodeLimit=4096);
+ internal sealed record Plan(string Schema,int PrefixCount,int MaxActions,bool Probe,string InputSha,string ChoiceSha,string RewardSha,NativeFullRun.Limits? Run=null,int SearchParallelism=1,bool ParallelProbe=false,string ExecutionPolicy="Guarded",int ReturnedAggregateNodeLimit=4096,string Character="Ironclad",string Pilot="",bool SearchStudy=false,string EventChoiceProfile="default");
  internal static Plan? Configuration;
  internal static object? Profile=>Configuration;
  internal static bool StopOnDeath=>Configuration?.ExecutionPolicy!="RunToTerminal";
@@ -31,8 +31,9 @@ internal static class NativeSolverCoordinator
   if(!IsScenario(scenario))return;
   if(replay==null||path=="")throw new NativeActionRejectedException("Coordinator requires declared exact prefix input and plan");
   Configuration=JsonSerializer.Deserialize<Plan>(File.ReadAllText(path),new JsonSerializerOptions{UnmappedMemberHandling=JsonUnmappedMemberHandling.Disallow})??throw new NativeActionRejectedException("Missing Coordinator plan");
-  var c=Configuration;NativeFullRun.Validate(c.Run);if(c.Run!=null&&!NativeDarv.IsActTwoProfile(scenario))throw new NativeActionRejectedException("Full run requires composed Darv profile");
+  var c=Configuration;NativePerformancePilot.Validate(c,scenario);NativeFullRun.Validate(c.Run);if(c.Run!=null&&!NativeDarv.IsActTwoProfile(scenario))throw new NativeActionRejectedException("Full run requires composed Darv profile");
   if(c.ExecutionPolicy is not ("Guarded" or "RunToTerminal")||c.ReturnedAggregateNodeLimit is not (4096 or 16384)||c.ExecutionPolicy=="RunToTerminal"&&(c.Run==null||c.Probe))throw new NativeActionRejectedException("Unsupported declared execution policy/budget");
+  if(c.EventChoiceProfile is not ("default" or "amalgamator-strikes" or "field-resist"))throw new NativeActionRejectedException("Unsupported event choice profile");
   if(c.SearchParallelism is <1 or >2||c.SearchParallelism>Environment.ProcessorCount||c.Run==null&&(c.SearchParallelism!=1||c.ParallelProbe))throw new NativeActionRejectedException("Unsupported declared search parallelism/probe");string dir=Path.GetDirectoryName(replay)!;
   if(c.Schema!="solver-coordinator-prefix/v1"||c.PrefixCount<0||(c.MaxActions<1||c.MaxActions>(c.Run==null?128:2000))||scenario.EndsWith("-replay")&&c.Probe||NativeBranchSearch.Sha(replay)!=c.InputSha||NativeBranchSearch.Sha(Path.Combine(dir,"choices.json"))!=c.ChoiceSha||NativeBranchSearch.Sha(Path.Combine(dir,"reward-choices.json"))!=c.RewardSha)throw new NativeActionRejectedException("Coordinator prefix schema/budget/input binding");
  }

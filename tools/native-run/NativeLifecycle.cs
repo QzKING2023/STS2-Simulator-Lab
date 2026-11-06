@@ -16,7 +16,7 @@ internal static class NativeLifecycle
     internal static bool Won;
     internal static bool Closed;
     internal static bool IsScenario(string scenario)=>scenario.StartsWith("tail-")||scenario.StartsWith("natural-death");
-    internal static bool CaptureScenario(string scenario)=>NativeSolverBattle.IsScenario(scenario)||NativeMajor.IsScenario(scenario)||IsScenario(scenario)||NativeRooms.IsScenario(scenario)||NativeRewardProbe.IsScenario(scenario)||NativeMerchant.IsScenario(scenario)||NativeMerchantEconomy.IsScenario(scenario);
+    internal static bool CaptureScenario(string scenario)=>NativeVisibleBattle.IsScenario(scenario)||NativeSolverBattle.IsScenario(scenario)||NativeMajor.IsScenario(scenario)||IsScenario(scenario)||NativeRooms.IsScenario(scenario)||NativeRewardProbe.IsScenario(scenario)||NativeMerchant.IsScenario(scenario)||NativeMerchantEconomy.IsScenario(scenario);
     internal static void Install()
     {
         NativeHost.Register(AccessTools.Method(typeof(RunManager),"OnEnded",[typeof(bool)]),nameof(EndBefore),typeof(NativeLifecycle),nameof(EndAfter));

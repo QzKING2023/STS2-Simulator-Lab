@@ -12,5 +12,5 @@ internal static class NativeTiming
         readonly long start=Stopwatch.GetTimestamp();
         public void Dispose(){ticks[key]=ticks.GetValueOrDefault(key)+Stopwatch.GetTimestamp()-start;calls[key]=calls.GetValueOrDefault(key)+1;}
     }
-    internal static void Write(string directory)=>File.WriteAllText(Path.Combine(directory,"timing.json"),JsonSerializer.Serialize(new{scope="overlapping wall durations; do not sum nested phases",peakWorkingSetBeforeExit=Process.GetCurrentProcess().PeakWorkingSet64,milliseconds=ticks.ToDictionary(t=>t.Key,t=>t.Value*1000d/Stopwatch.Frequency),calls},Program.Json));
+    internal static void Write(string directory)=>File.WriteAllText(Path.Combine(directory,"timing.json"),JsonSerializer.Serialize(new{scope="overlapping wall durations; do not sum nested phases",peakWorkingSetBeforeExit=Process.GetCurrentProcess().PeakWorkingSet64,processCpuMillisecondsBeforeExit=Process.GetCurrentProcess().TotalProcessorTime.TotalMilliseconds,milliseconds=ticks.ToDictionary(t=>t.Key,t=>t.Value*1000d/Stopwatch.Frequency),calls},Program.Json));
 }

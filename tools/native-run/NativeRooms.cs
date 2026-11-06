@@ -193,6 +193,7 @@ internal static partial class Program
         // Preserve a real initialization fault before classifying an unknown model.
         NativeHost.Ensure();
         var ev=RunManager.Instance.EventSynchronizer.GetLocalEvent();
+        if(NativeFullRun.Active&&ev is Amalgamator amalgamator){NativeAmalgamator.Enter(amalgamator);return;}
         if((NativeFullRun.Active||NativeEventFixtures.Active)&&ev is Reflections reflections){NativeReflections.Enter(reflections);return;}
         if((NativeFullRun.Active||NativeEventFixtures.Active)&&NativeSimpleEventEntry.Supports(ev)){NativeSimpleEventEntry.Enter(ev);return;}
         if(NativeFullRun.Active&&ev is SlipperyBridge bridge){NativeSlipperyBridge.Enter(bridge);return;}
