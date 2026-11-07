@@ -32,6 +32,36 @@ public sealed record ResourceResult(
     int Amount,
     string Reason);
 
+public sealed record TargetSelectionDefinition(
+    string Mode,
+    string? TargetKind = null,
+    int MinTargets = 0,
+    int MaxTargets = 0,
+    bool AllowsSelf = false);
+
+public sealed record CardEffectDefinition(
+    string Kind,
+    string? TargetMode = null,
+    int? Amount = null,
+    string? ResourceId = null,
+    string? Timing = null,
+    string? EvidenceRef = null);
+
+public sealed record RelicTriggerDefinition(
+    string Timing,
+    string EffectKind,
+    int? Amount = null,
+    string? EvidenceRef = null);
+
+public sealed record PowerLifecycleDefinition(
+    string AcquireTiming,
+    string DurationMode,
+    int? Duration,
+    string TurnBoundary,
+    string DeathBehavior,
+    string CombatEndBehavior,
+    string? EvidenceRef = null);
+
 public sealed record HookCapability(
     string Id,
     string HookPoint,
@@ -58,20 +88,24 @@ public sealed record CardDefinition(
     string Description,
     IReadOnlyList<ResourceResult> ResourceResults,
     IReadOnlyList<HookCapability> Hooks,
-    bool IsGeneratedCard = false);
+    bool IsGeneratedCard = false,
+    TargetSelectionDefinition? Targeting = null,
+    IReadOnlyList<CardEffectDefinition>? Effects = null);
 
 public sealed record RelicDefinition(
     string Id,
     string DisplayName,
     IReadOnlyList<HookCapability> Hooks,
-    IReadOnlyList<ResourceResult> ResourceResults);
+    IReadOnlyList<ResourceResult> ResourceResults,
+    IReadOnlyList<RelicTriggerDefinition>? Triggers = null);
 
 public sealed record PowerDefinition(
     string Id,
     string DisplayName,
     int? Duration,
     IReadOnlyList<HookCapability> Hooks,
-    IReadOnlyList<ResourceResult> ResourceResults);
+    IReadOnlyList<ResourceResult> ResourceResults,
+    PowerLifecycleDefinition? Lifecycle = null);
 
 public sealed record EnemyDefinition(
     string Id,

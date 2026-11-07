@@ -22,6 +22,36 @@ public sealed record AdapterHookInput(
     string? Description = null,
     string? EvidenceRef = null);
 
+public sealed record AdapterTargetInput(
+    string? Mode = null,
+    string? TargetKind = null,
+    int MinTargets = 0,
+    int MaxTargets = 0,
+    bool AllowsSelf = false);
+
+public sealed record AdapterEffectInput(
+    string? Kind = null,
+    string? TargetMode = null,
+    int? Amount = null,
+    string? ResourceId = null,
+    string? Timing = null,
+    string? EvidenceRef = null);
+
+public sealed record AdapterRelicTriggerInput(
+    string? Timing = null,
+    string? EffectKind = null,
+    int? Amount = null,
+    string? EvidenceRef = null);
+
+public sealed record AdapterPowerLifecycleInput(
+    string? AcquireTiming = null,
+    string? DurationMode = null,
+    int? Duration = null,
+    string? TurnBoundary = null,
+    string? DeathBehavior = null,
+    string? CombatEndBehavior = null,
+    string? EvidenceRef = null);
+
 public sealed record AdapterObjectInput(
     string? Kind = null,
     string? Id = null,
@@ -38,7 +68,11 @@ public sealed record AdapterObjectInput(
     IReadOnlyList<string>? ContentIds = null,
     IReadOnlyList<AdapterHookInput>? Hooks = null,
     IReadOnlyList<AdapterResourceInput>? ResourceResults = null,
-    bool IsGeneratedCard = false);
+    bool IsGeneratedCard = false,
+    AdapterTargetInput? Targeting = null,
+    IReadOnlyList<AdapterEffectInput>? Effects = null,
+    IReadOnlyList<AdapterRelicTriggerInput>? Triggers = null,
+    AdapterPowerLifecycleInput? Lifecycle = null);
 
 public sealed record ModAdapterDocument(
     string? ModId = null,

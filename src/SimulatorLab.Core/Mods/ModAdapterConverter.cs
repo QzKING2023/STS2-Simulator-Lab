@@ -193,9 +193,10 @@ public static class ModAdapterConverter
                 switch (kind)
                 {
                     case "Character": characters.Add(new(id, name, Sorted(input.StartingCardIds), Sorted(input.StartingRelicIds), Sorted(input.PowerIds))); break;
-                    case "Card": cards.Add(new(id, name, input.Cost!.Value, input.Description ?? "", objectResources, objectHooks, input.IsGeneratedCard)); break;
-                    case "Relic": relics.Add(new(id, name, objectHooks, objectResources)); break;
-                    case "Power": powers.Add(new(id, name, input.Duration, objectHooks, objectResources)); break;
+                    case "Card": cards.Add(new(id, name, input.Cost!.Value, input.Description ?? "", objectResources, objectHooks, input.IsGeneratedCard,
+                        ConvertTargeting(input.Targeting), ConvertEffects(input.Effects, id, errors))); break;
+                    case "Relic": relics.Add(new(id, name, objectHooks, objectResources, ConvertRelicTriggers(input.Triggers, id, errors))); break;
+                    case "Power": powers.Add(new(id, name, input.Duration, objectHooks, objectResources, ConvertLifecycle(input.Lifecycle, id, errors))); break;
                     case "Enemy": enemies.Add(new(id, name, Sorted(input.IntentIds), objectHooks)); break;
                     case "Encounter": encounters.Add(new(id, name, Sorted(input.EnemyIds))); break;
                     case "Event": events.Add(new(id, name, Sorted(input.OptionIds), objectHooks)); break;
@@ -331,6 +332,55 @@ public static class ModAdapterConverter
             result.Add(value); all.Add(value);
         }
         return result;
+    }
+
+    private static TargetSelectionDefinition? ConvertTargeting(AdapterTargetInput? input) => input is null || string.IsNullOrWhiteSpace(input.Mode)
+        ? null
+        : new(input.Mode.Trim(), input.TargetKind?.Trim(), input.MinTargets, input.MaxTargets, input.AllowsSelf);
+
+    private static IReadOnlyList<CardEffectDefinition> ConvertEffects(IReadOnlyList<AdapterEffectInput>? inputs, string id, List<AdapterErrorRecord> errors)
+    {
+        var result = new List<CardEffectDefinition>();
+        foreach (var input in inputs ?? [])
+        {
+            if (input is null || string.IsNullOrWhiteSpace(input.Kind))
+            {
+                errors.Add(AdapterErrorRecord.Create(AdapterErrorCode.MissingField, id, $"/objects/{id}/effects", "card effect kind is required"));
+                continue;
+            }
+            result.Add(new(input.Kind.Trim(), input.TargetMode?.Trim(), input.Amount, input.ResourceId?.Trim(), input.Timing?.Trim(), input.EvidenceRef));
+        }
+        return result;
+    }
+
+    private static IReadOnlyList<RelicTriggerDefinition> ConvertRelicTriggers(IReadOnlyList<AdapterRelicTriggerInput>? inputs, string id, List<AdapterErrorRecord> errors)
+    {
+        var result = new List<RelicTriggerDefinition>();
+        foreach (var input in inputs ?? [])
+        {
+            if (input is null || string.IsNullOrWhiteSpace(input.Timing) || string.IsNullOrWhiteSpace(input.EffectKind))
+            {
+                errors.Add(AdapterErrorRecord.Create(AdapterErrorCode.MissingField, id, $"/objects/{id}/triggers", "relic trigger timing and effectKind are required"));
+                continue;
+            }
+            result.Add(new(input.Timing.Trim(), input.EffectKind.Trim(), input.Amount, input.EvidenceRef));
+        }
+        return result;
+    }
+
+    private static PowerLifecycleDefinition? ConvertLifecycle(AdapterPowerLifecycleInput? input, string id, List<AdapterErrorRecord> errors)
+    {
+        if (input is null) return null;
+        if (string.IsNullOrWhiteSpace(input.AcquireTiming) || string.IsNullOrWhiteSpace(input.DurationMode) ||
+            string.IsNullOrWhiteSpace(input.TurnBoundary) || string.IsNullOrWhiteSpace(input.DeathBehavior) ||
+            string.IsNullOrWhiteSpace(input.CombatEndBehavior))
+        {
+            errors.Add(AdapterErrorRecord.Create(AdapterErrorCode.MissingField, id, $"/objects/{id}/lifecycle", "power lifecycle fields are required"));
+            return null;
+        }
+        if (input.Duration is < 0)
+            errors.Add(AdapterErrorRecord.Create(AdapterErrorCode.InvalidValue, id, $"/objects/{id}/lifecycle/duration", "power lifecycle duration cannot be negative"));
+        return new(input.AcquireTiming.Trim(), input.DurationMode.Trim(), input.Duration, input.TurnBoundary.Trim(), input.DeathBehavior.Trim(), input.CombatEndBehavior.Trim(), input.EvidenceRef);
     }
 
     private static void ValidateReferences(ModDefinitionSet model, List<AdapterErrorRecord> errors)
