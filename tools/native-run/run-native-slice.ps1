@@ -16,6 +16,121 @@ function CheckBinding {
  foreach($row in @($m.manifest.compiled)+@($m.manifest.artifacts)) {if((Get-FileHash -LiteralPath (Join-Path $build $row.path)).Hash -ne $row.sha256){throw "Changed compiled source/artifact: $($row.path)"}}
 }
 CheckBinding
+
+function Invoke-WatcherGodotSlice {
+    param(
+        [Parameter(Mandatory)][string]$Output,
+        [Parameter(Mandatory)][string]$GameRoot,
+        [Parameter(Mandatory)][string]$BuildId,
+        [Parameter(Mandatory)][string]$ContentKey,
+        [Parameter(Mandatory)][string]$Seed,
+        [Parameter(Mandatory)][string]$Scenario,
+        [Parameter(Mandatory)][string]$Observation,
+        [string]$Replay = ''
+    )
+
+    $exe = Join-Path $GameRoot 'SlayTheSpire2.exe'
+    $pck = Join-Path $GameRoot 'SlayTheSpire2.pck'
+    $probeDll = Join-Path $GameRoot 'mods/SimulatorLab.GameProbe/SimulatorLab.GameProbe.dll'
+    $probeJson = Join-Path $GameRoot 'mods/SimulatorLab.GameProbe/SimulatorLab.GameProbe.json'
+    $baseDll = Join-Path $GameRoot 'mods/BaseLib/BaseLib.dll'
+    $watcherDll = Join-Path $GameRoot 'mods/Watcher/Watcher.dll'
+    foreach($path in @($exe,$pck,$probeDll,$probeJson,$baseDll,$watcherDll)) {
+        if(!(Test-Path -LiteralPath $path -PathType Leaf)) { throw "Watcher Godot input is missing: $path" }
+    }
+    if((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -ne '8602C26BFFD2937E3841835FD8360EF8E974624A543E05977229FD3D062BE231') { throw 'Watcher Godot executable hash is not the pinned 0.111.0 input' }
+    if((Get-FileHash -LiteralPath $pck -Algorithm SHA256).Hash -ne 'C60F672EE7804E6AEFA1E19A582FA1C80B126A7B0EEF4D084D3ABF110DF2EAB7') { throw 'Watcher Godot PCK hash is not the pinned 0.111.0 input' }
+
+    $gameOutput = Join-Path $Output 'godot-probe'
+    $appData = Join-Path $Output 'game-appdata'
+    $localAppData = Join-Path $Output 'game-localappdata'
+    New-Item -ItemType Directory -Path $gameOutput,$appData,$localAppData -Force | Out-Null
+    $seedProfile = Join-Path $lab '.build/native-game/appdata/SlayTheSpire2/default/1'
+    if(Test-Path -LiteralPath $seedProfile -PathType Container) {
+        $settingsDir = Join-Path $appData 'SlayTheSpire2/default/1'
+        New-Item -ItemType Directory -Path $settingsDir -Force | Out-Null
+        Copy-Item -Path (Join-Path $seedProfile '*') -Destination $settingsDir -Recurse -Force
+    }
+
+    $psi = [Diagnostics.ProcessStartInfo]::new($exe)
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.WorkingDirectory = $GameRoot
+    # Godot writes its complete diagnostic stream to godot.log.  Do not keep
+    # inherited stdout/stderr pipes open: the native launcher can keep a
+    # console handle alive after the game process has completed, which would
+    # make the parent wait forever while reading redirected streams.
+    $psi.RedirectStandardOutput = $false
+    $psi.RedirectStandardError = $false
+    foreach($arg in @('--headless','--quit-after','300','--log-file',(Join-Path $gameOutput 'godot.log'),'--force-steam','off')) { $psi.ArgumentList.Add($arg) }
+    $psi.Environment['APPDATA'] = $appData
+    $psi.Environment['LOCALAPPDATA'] = $localAppData
+    $psi.Environment['SIMULATORLAB_WATCHER_GAME_OUTPUT'] = $gameOutput
+    $psi.Environment['SIMULATORLAB_WATCHER_BUILD_ID'] = $BuildId
+    $psi.Environment['SIMULATORLAB_WATCHER_CONTENT_KEY'] = $ContentKey
+    $startedUtc = [DateTime]::UtcNow
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $child = [Diagnostics.Process]::Start($psi)
+    if(!$child.WaitForExit($ProcessTimeoutSeconds * 1000)) {
+        try { $child.Kill($true) } catch { }
+        throw "Watcher Godot process exceeded ${ProcessTimeoutSeconds}s"
+    }
+    $clock.Stop()
+    [IO.File]::WriteAllText((Join-Path $Output 'console.log'),'external Godot process; see godot-probe/godot.log',[Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $Output 'stderr.log'),'external Godot process; see godot-probe/godot.log',[Text.UTF8Encoding]::new($false))
+    $rawExit = $child.ExitCode
+    $rawExit | Set-Content -LiteralPath (Join-Path $Output 'godot-raw-exit.txt') -Encoding utf8
+    $probePath = Join-Path $gameOutput 'gameprobe.json'
+    if($rawExit -ne 0 -or !(Test-Path -LiteralPath $probePath -PathType Leaf)) {
+        throw "Watcher Godot runtime failed: raw exit $rawExit; probe present $([bool](Test-Path -LiteralPath $probePath))"
+    }
+    $probe = Get-Content -LiteralPath $probePath -Raw | ConvertFrom-Json
+    if($probe.schema -ne 'watcher-runtime-probe/v1' -or !$probe.nativeRuntimeAvailable -or $probe.terminal -ne 'battle-complete') { throw 'Watcher Godot probe did not prove a native battle boundary' }
+    $requiredEvents = @('character-discovered','character-selected','initial-state','battle-victory','reward-boundary','leave-combat','cleanup','replay')
+    foreach($event in $requiredEvents) { if(@($probe.events) -notcontains $event) { throw "Watcher Godot probe is missing event $event" } }
+    Copy-Item -LiteralPath $probePath -Destination (Join-Path $Output 'watcher-runtime-probe.json')
+    $identityCount = @($probe.identities).Count
+    $actionCount = @($probe.evidence.combat).Count
+    if($identityCount -lt 1 -or $actionCount -lt 1) { throw 'Watcher Godot probe is missing identities or combat actions' }
+    $inputBinding = [ordered]@{
+        schema = 'watcher-native-input-binding/v1'
+        snapshot = $env:SIMULATORLAB_WATCHER_SNAPSHOT_ROOT
+        snapshotContentSha256 = '7d23eddd8a238e248b921a0f12056c2a6a2a264936a5ad56ce9ee65b30148a73'
+        targetGameVersion = '0.111.0'; gameCommit = '41cef1ea'; seed = $Seed
+        gameRoot = $GameRoot; nativeBuildId = $BuildId; probePath = $probePath
+        executableSha256 = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
+        pckSha256 = (Get-FileHash -LiteralPath $pck -Algorithm SHA256).Hash
+        baseLibSha256 = (Get-FileHash -LiteralPath $baseDll -Algorithm SHA256).Hash
+        watcherSha256 = (Get-FileHash -LiteralPath $watcherDll -Algorithm SHA256).Hash
+        gameProbeSha256 = (Get-FileHash -LiteralPath $probeDll -Algorithm SHA256).Hash
+        gameProbeSourceSha256 = (Get-FileHash -LiteralPath (Join-Path $lab '.build/diag/gameprobe/MainFile.cs') -Algorithm SHA256).Hash
+        gameProbeProjectSha256 = (Get-FileHash -LiteralPath (Join-Path $lab '.build/diag/gameprobe/GameProbe.csproj') -Algorithm SHA256).Hash
+        formalSteamDataWritten = $false
+    }
+    $inputBinding | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $Output 'input-binding.json') -Encoding utf8
+    $provenance = [ordered]@{ScenarioKind='WatcherGodotNative';ExecutionKind='RealGodotProcess';Scenario=$Scenario;Replay=([bool]$Replay);Evidence='watcher-runtime-probe/v1';BuildId=$BuildId}
+    $result = [ordered]@{
+        schema='native-run-result/v1'; terminal='Ongoing'; stop='SliceBoundary'; comparison='NotCompared'
+        dispatched=$actionCount; confirmed=$actionCount; dataComplete=$true
+        lastBoundary='watcher-battle-reward-leave-cleanup'; error=$null
+    }
+    $trace = [ordered]@{schema='native-trace/v1';complete=$true;source='real-godot-process';probeDigest=$probe.primaryDigest;events=$probe.events}
+    $report = [ordered]@{result=$result;validation=@();rawExit=0;scope=$Scenario;provenance=$provenance;trace=$trace;watcherProbe=(Resolve-Path (Join-Path $Output 'watcher-runtime-probe.json')).Path;inputBinding=(Resolve-Path (Join-Path $Output 'input-binding.json')).Path}
+    $report | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $Output 'result.json') -Encoding utf8
+    $report | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $Output 'runtime-result.json') -Encoding utf8
+    [ordered]@{processTimeoutSeconds=$ProcessTimeoutSeconds;elapsedSeconds=$clock.Elapsed.TotalSeconds;schema='native-process/v1';buildId=$BuildId;seed=$Seed;scenario=$Scenario;observation=$Observation;peakWorkingSet=$null;peakWorkingSetSource='unavailable for external Godot process';provenance=$provenance;scenarioKind=$provenance.ScenarioKind;executionKind=$provenance.ExecutionKind;control='';rawExit=0;watchdogExpired=$false;watchdogReason='';memoryCapBytes=$null;reportPresent=$true;exitConsistent=$true;startedUtc=$startedUtc.ToString('o');endedUtc=[DateTime]::UtcNow.ToString('o');stop='SliceBoundary';replay=$Replay} | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $Output 'process.json') -Encoding utf8
+    [ordered]@{schema='native-timing/v1';elapsedSeconds=$clock.Elapsed.TotalSeconds;peakWorkingSetBeforeExit=$null;source='external-godot-process'} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Output 'timing.json') -Encoding utf8
+    Copy-Item -LiteralPath $buildPath -Destination (Join-Path $Output 'build-manifest.json')
+    return 0
+}
+
+if($Scenario -eq 'watcher-stage6' -and $env:SIMULATORLAB_WATCHER_STAGE6 -eq '1') {
+    $watcherGameRoot = Join-Path $lab '.build/native-game/watcher-stage6'
+    New-Item -ItemType Directory -Path $out -Force | Out-Null
+    $watcherExit = Invoke-WatcherGodotSlice -Output $out -GameRoot $watcherGameRoot -BuildId $m.buildId -ContentKey $m.manifest.contentKey -Seed $Seed -Scenario $Scenario -Observation $Observation -Replay $ReplayPath
+    CheckBinding
+    exit $watcherExit
+}
 if($ProcessTimeoutSeconds -gt 120){
  if(!$SolverPlan){throw 'Long process envelope requires an explicit registered plan'}
  $fullPlan=Get-Content -LiteralPath $SolverPlan -Raw|ConvertFrom-Json

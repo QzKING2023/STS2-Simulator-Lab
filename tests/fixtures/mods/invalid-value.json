@@ -5,5 +5,5 @@
   "targetGameVersion": "0.111.0",
   "sourcePath": "fixture/invalid-value.json",
   "files": [{ "path": "fixture.json", "present": true }],
-  "objects": [{ "kind": "Card", "id": "fixture.card", "name": "Bad Card", "cost": -1 }]
+  "objects": [{ "kind": "Card", "id": "fixture.card", "name": "Bad Card", "cost": -2 }]
 }

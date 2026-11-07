@@ -47,6 +47,7 @@ internal static partial class Program
     internal static bool CombatActionActive;
     internal static bool InThirdAct=>run?.CurrentActIndex==2;
     internal static bool InSecondAct=>run?.CurrentActIndex>0;
+    internal static IReadOnlyList<object> WatcherEvents => Events.ToArray();
     static object CardState(CardModel c)=>NativeNaturalBoss.CardRecords?(object)new{id=Id(c),model=c.Id.ToString(),upgrade=c.CurrentUpgradeLevel,deck=c.DeckVersion==null?null:Id(c.DeckVersion),native=c.ToSerializable()}:new{id=Id(c),model=c.Id.ToString(),upgrade=c.CurrentUpgradeLevel,deck=c.DeckVersion==null?null:Id(c.DeckVersion)};
     internal static object PermanentCardState(CardModel c)=>(NativeMerchantEconomy.Active||NativeRewardClosure.Active||NativeNaturalBoss.CardRecords)?(object)new{id=Id(c),model=c.Id.ToString(),upgrade=c.CurrentUpgradeLevel,native=c.ToSerializable()}:new{id=Id(c),model=c.Id.ToString(),upgrade=c.CurrentUpgradeLevel};
     static object EnemyState(Creature e)=>NativeMajor.Active?(object)new{id=Id(e),hp=e.CurrentHp,block=e.Block,model=e.Monster?.Id.ToString(),alive=e.IsAlive,primary=e.IsPrimaryEnemy,powers=e.Powers.Select(p=>new{id=Id(p),model=p.Id.ToString(),amount=p.Amount}).ToArray()}:new{id=Id(e),hp=e.CurrentHp,block=e.Block,model=e.Monster?.Id.ToString(),powers=e.Powers.Select(p=>new{id=Id(p),model=p.Id.ToString(),amount=p.Amount}).ToArray()};
@@ -214,7 +215,7 @@ internal static partial class Program
             foreach(var reward in set.Rewards.Where(r=>r is GoldReward)){
                 Action("TakeGold",new{setId=set.Id,index=set.Rewards.ToList().IndexOf(reward)},()=>Await(manager.RewardsSetSynchronizer.SelectLocalReward(reward),"Native gold collection"));
             }
-            if(scenario=="slice-take"||NativeEventFlow.Active&&!NativeEventFlow.Natural){
+            if(scenario=="slice-take"||WatcherNativeModLoop.Enabled||NativeEventFlow.Active&&!NativeEventFlow.Natural){
                 var reward=set.Rewards.OfType<CardReward>().Single();
                 if(!NativeChoices.Replaying)NativeChoices.Planned.Enqueue([NativeEventFlow.Active?Math.Max(0,reward.Cards.ToList().FindIndex(c=>c.Type==MegaCrit.Sts2.Core.Entities.Cards.CardType.Attack)):1]);
                 var original=player.Deck.Cards.ToArray();
@@ -299,7 +300,7 @@ internal static partial class Program
             if(replayPath!=null){replay=JsonDocument.Parse(File.ReadAllText(replayPath)).RootElement.EnumerateArray().Select(e=>e.Clone()).ToArray();if(NativeSolverCoordinator.Active&&!scenario.EndsWith("-replay")){if(replay.Length!=NativeSolverCoordinator.Configuration!.PrefixCount)throw new NativeActionRejectedException("Coordinator requires exact complete prefix route");}if(NativeBranchSearch.Active){if(replay.Length<NativeBranchSearch.Plan!.PrefixCount)throw new NativeActionRejectedException("Short branch prefix");replay=replay.Take(NativeBranchSearch.Plan.PrefixCount).ToArray();}}
             AssemblyResolver.VerifyGame();
             loop=new();SynchronizationContext.SetSynchronizationContext(loop);
-            using(NativeTiming.Measure("host-initialization")){NativeHost.Install();GameBootstrap.InitializeStaticState();NativeSolverProfile.Initialize(output);NativeHost.Ensure();}
+            using(NativeTiming.Measure("host-initialization")){NativeHost.Install();if(WatcherNativeModLoop.Enabled)GameBootstrap.ModelTypeAugmenter=WatcherNativeModLoop.IncludeModels;GameBootstrap.InitializeStaticState();if(WatcherNativeModLoop.Enabled){WatcherNativeModLoop.Initialize();Console.WriteLine("[watcher] finishing ModelDb");Console.Out.Flush();GameBootstrap.FinishModelDb();Console.WriteLine("[watcher] ModelDb finished");Console.Out.Flush();}NativeSolverProfile.Initialize(output);NativeHost.Ensure();}
             NativeHost.Observe=kind=>Observe(kind);
             selectorScope=CardSelectCmd.UseSelector(NativeChoices.Instance);
             if(replayPath!=null){var cp=Path.Combine(Path.GetDirectoryName(replayPath)!,"choices.json");if(!File.Exists(cp))throw new NativeActionRejectedException("Missing frozen choice transcript");NativeChoices.LoadReplay(cp);NativeChoices.Replaying=true;
@@ -335,7 +336,8 @@ internal static partial class Program
             Action("EnterAct",new{act=0},()=>Await(manager.EnterAct(0,false),"Natural first act"));
             Opening();
             if(control=="stale")new NativeDecisionTicket(run,sequence,"before","Travel").Consume(run,sequence+1,"before","Travel");
-            if(NativeSolverRun.Active){SolverTwoBattles();stop=terminal==NativeRunTerminal.Death?NativeRunStop.Completed:NativeRunStop.SliceBoundary;}
+            if(WatcherNativeModLoop.IsScenario(scenario)){Travel();Ready();Battle();if(terminal==NativeRunTerminal.Death)stop=NativeRunStop.Completed;else{Rewards();Travel();Ready();stop=NativeRunStop.SliceBoundary;}}
+            else if(NativeSolverRun.Active){SolverTwoBattles();stop=terminal==NativeRunTerminal.Death?NativeRunStop.Completed:NativeRunStop.SliceBoundary;}
             else if(NativeEventFixtures.Active){AcceptanceEventFixture();stop=NativeRunStop.SliceBoundary;}
             else if(scenario=="solver-power-death"){Travel();Ready();SolverPowerDeathFixture();stop=NativeRunStop.SliceBoundary;}
             else if(scenario=="solver-self-cost"){Travel();Ready();SolverSelfCostFixture();stop=NativeRunStop.SliceBoundary;}
@@ -383,6 +385,7 @@ internal static partial class Program
         if(NativeEvidence.Failure!=null){stop=NativeRunStop.DataError;error=NativeEvidence.Failure.ToString();}
         Write("final-state.json",State());
         if(NativeFullRun.Active)FullRunReport();
+        if(WatcherNativeModLoop.Enabled)WatcherNativeModLoop.WriteProbe(output,seed,replayPath!=null,terminal,stop,error);
         if(dispatched>confirmed && error!=null)terminal=NativeRunTerminal.Unknown;
         var result=new NativeRunResultV1{Terminal=terminal,Stop=stop,Dispatched=dispatched,Confirmed=confirmed,DataComplete=error==null,LastBoundary=last,Error=error};
         Write("result.json",new{result,validation=result.Validate(),rawExit=result.ExitCode,scope=scenario,provenance,trace=seal,choicesSubmitted=NativeChoices.Submitted,guards=new{NativeHost.ProgressWrites,NativeHost.ReplayWrites,NativeHost.TelemetryCalls,faults=NativeHost.Faults.Select(e=>e.ToString()).ToArray(),isolation=NativeHost.IsolationEvidence},seams=NativeHost.Seams,bootstrap=GameBootstrap.Bypasses,loadedAssemblies=AppDomain.CurrentDomain.GetAssemblies().Select(a=>a.GetName().Name).Order().ToArray()});

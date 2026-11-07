@@ -37,7 +37,8 @@ public sealed record AdapterObjectInput(
     IReadOnlyList<string>? OptionIds = null,
     IReadOnlyList<string>? ContentIds = null,
     IReadOnlyList<AdapterHookInput>? Hooks = null,
-    IReadOnlyList<AdapterResourceInput>? ResourceResults = null);
+    IReadOnlyList<AdapterResourceInput>? ResourceResults = null,
+    bool IsGeneratedCard = false);
 
 public sealed record ModAdapterDocument(
     string? ModId = null,

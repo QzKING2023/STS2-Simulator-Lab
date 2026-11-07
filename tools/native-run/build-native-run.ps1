@@ -135,7 +135,7 @@ function Write-AtomicText {
 
     $parent = Split-Path -Parent $Path
     if (!(Test-Path -LiteralPath $parent -PathType Container)) {
-        New-Item -ItemType Directory -LiteralPath $parent -Force | Out-Null
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
     }
 
     $temporary = '{0}.tmp-{1}' -f $Path, [Guid]::NewGuid().ToString('N')
@@ -469,8 +469,12 @@ if (!$DryRun) {
     if (!(Test-Path -LiteralPath $coreProjectPath -PathType Leaf)) { throw "Core project is missing: $coreProjectPath" }
 }
 
-$solverInfo = Get-SnapshotInfo -SnapshotPath $SolverSnapshot -Kind solver
-$foreseerInfo = Get-SnapshotInfo -SnapshotPath $ForeseerSnapshot -Kind foreseer
+$solverInfo = if ([string]::IsNullOrWhiteSpace($SolverSnapshot)) {
+    [pscustomobject]@{ path = ''; version = 'none'; lockSha256 = 'none'; lock = $null }
+} else { Get-SnapshotInfo -SnapshotPath $SolverSnapshot -Kind solver }
+$foreseerInfo = if ([string]::IsNullOrWhiteSpace($ForeseerSnapshot)) {
+    [pscustomobject]@{ path = ''; version = 'none'; lockSha256 = 'none'; lock = $null }
+} else { Get-SnapshotInfo -SnapshotPath $ForeseerSnapshot -Kind foreseer }
 $sourceRevision = Get-OptionalGitValue -Arguments @('-C', $labRoot, 'rev-parse', 'HEAD')
 $dirtyText = Get-OptionalGitValue -Arguments @('-C', $labRoot, 'status', '--porcelain', '--untracked-files=no')
 $dirtyHash = if ($dirtyText -eq 'unavailable' -or !$dirtyText) { 'clean-or-unavailable' } else { Get-Sha256Text -Text $dirtyText }
@@ -650,10 +654,10 @@ else {
         throw "Cache key is a reparse point and cannot be replaced: $out"
     }
     $stageParent = if ($explicitOutput) { Split-Path -Parent $out } else { $cacheRoot }
-    New-Item -ItemType Directory -LiteralPath $stageParent -Force | Out-Null
+    New-Item -ItemType Directory -Path $stageParent -Force | Out-Null
     $stageName = '.staging-{0}-{1}' -f ($(if ($explicitOutput) { [IO.Path]::GetFileName($out) } else { $contentKey }), [Guid]::NewGuid().ToString('N'))
     $staging = Join-Path $stageParent $stageName
-    New-Item -ItemType Directory -LiteralPath $staging -Force | Out-Null
+    New-Item -ItemType Directory -Path $staging -Force | Out-Null
     $out = $staging
 }
 
@@ -790,12 +794,14 @@ try {
         $bootstrapPath = Join-Path $out 'GameBootstrap.cs'
         $text = [IO.File]::ReadAllText($bootstrapPath)
         $start = $text.IndexOf('        if (!NativeModRunLoop.Enabled) {')
-        $end = $text.IndexOf('        Trace("mod_manager_state");', $start)
-        if ($start -lt 0 -or $end -lt 0) { throw 'Reviewed upstream bootstrap anchor changed' }
-        $text = $text.Remove($start, $end - $start).Insert($start, @'
+        if ($start -ge 0) {
+            $end = $text.IndexOf('        Trace("mod_manager_state");', $start)
+            if ($end -lt 0) { throw 'Reviewed upstream bootstrap anchor changed' }
+            $text = $text.Remove($start, $end - $start).Insert($start, @'
         AccessTools.Field(typeof(ReflectionHelper), "_modTypes").SetValue(null, Array.Empty<Type>());
         AccessTools.PropertySetter(typeof(ModManager), nameof(ModManager.State))!.Invoke(null, [ModManagerState.Initialized]);
 '@ + [Environment]::NewLine)
+        }
         $text = $text -replace '(?m)^.*CombatSolver\.SolverController\.DisplayServerNameProvider =.*\r?\n', ''
         $text = $text -replace '(?m)^.*_bypasses\.Add\("SolverController.DisplayServerNameProvider.*\r?\n', ''
         $text = $text.Replace('        if (NativeModRunLoop.Enabled) NativeModRunLoop.Initialize();', '')
@@ -820,6 +826,34 @@ try {
         $dotnetStderr = @($dotnetRaw | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { $_.ToString() })
         Add-RawLogLines -Lines @($dotnetRaw | ForEach-Object { $_.ToString() })
         if ($dotnetExitCode -ne 0) { throw "Native build failed (dotnet exit $dotnetExitCode); the full build output is embedded in run.log" }
+
+        # sts2.dll runs a module initializer before the harness resolver can
+        # service every managed dependency. Keep the small game-owned runtime
+        # closure beside the executable and bind each copied file below.
+        $runtimeBin = Join-Path $out 'bin/Release/net9.0'
+        $runtimeDataNames = @(
+            'Sentry.dll', 'Sentry.Godot.dll', 'Steamworks.NET.dll',
+            'SmartFormat.dll', 'SmartFormat.ZString.dll', 'JetBrains.Annotations.dll',
+            'MonoMod.Backports.dll', 'MonoMod.ILHelpers.dll',
+            'SharpGen.Runtime.dll', 'SharpGen.Runtime.COM.dll',
+            'Vortice.DirectX.dll', 'Vortice.DXGI.dll', 'Vortice.Mathematics.dll',
+            'System.IO.Hashing.dll'
+        )
+        foreach ($name in $runtimeDataNames) {
+            $source = Join-Path $data $name
+            if (!(Test-Path -LiteralPath $source -PathType Leaf)) { throw "Pinned runtime dependency is missing: $source" }
+            Copy-Item -LiteralPath $source -Destination (Join-Path $runtimeBin $name) -Force
+        }
+        $runtimeRootNames = @(
+            'libsentry.windows.release.x86_64.dll',
+            'libGodotFmod.windows.template_release.x86_64.dll',
+            'libspine_godot.windows.template_release.x86_64.dll'
+        )
+        foreach ($name in $runtimeRootNames) {
+            $source = Join-Path $gameRoot $name
+            if (!(Test-Path -LiteralPath $source -PathType Leaf)) { throw "Pinned native dependency is missing: $source" }
+            Copy-Item -LiteralPath $source -Destination (Join-Path $runtimeBin $name) -Force
+        }
 
         if ($null -ne $solverLock) {
             foreach ($r in $solverLock.assemblies) { Copy-Item (Join-Path $solverInfo.path $r.file) (Join-Path $out 'bin/Release/net9.0') }
@@ -846,6 +880,8 @@ try {
     $rows.AddRange(@(Get-ChildItem -LiteralPath (Join-Path $labRoot 'src/SimulatorLab.Core') -Filter '*.cs' -File | ForEach-Object { @{ path = $_.FullName; sha256 = Get-FileSha256 -Path $_.FullName } }))
     $rows.AddRange(@(Get-Item (Join-Path $labRoot 'src/SimulatorLab.Core/SimulatorLab.Core.csproj'), (Join-Path $labRoot 'tests/SimulatorLab.Core.Checks/Program.cs'), (Join-Path $labRoot 'tests/SimulatorLab.Core.Checks/SimulatorLab.Core.Checks.csproj') | ForEach-Object { @{ path = $_.FullName; sha256 = Get-FileSha256 -Path $_.FullName } }))
     $inputs = @('sts2.dll', 'GodotSharp.dll', '0Harmony.dll') | ForEach-Object { @{ path = (Join-Path $data $_); sha256 = Get-FileSha256 -Path (Join-Path $data $_) } }
+    $inputs += @('Sentry.dll', 'Sentry.Godot.dll', 'Steamworks.NET.dll', 'SmartFormat.dll', 'SmartFormat.ZString.dll', 'JetBrains.Annotations.dll', 'MonoMod.Backports.dll', 'MonoMod.ILHelpers.dll', 'SharpGen.Runtime.dll', 'SharpGen.Runtime.COM.dll', 'Vortice.DirectX.dll', 'Vortice.DXGI.dll', 'Vortice.Mathematics.dll', 'System.IO.Hashing.dll') | ForEach-Object { @{ path = (Join-Path $data $_); sha256 = Get-FileSha256 -Path (Join-Path $data $_) } }
+    $inputs += @('libsentry.windows.release.x86_64.dll', 'libGodotFmod.windows.template_release.x86_64.dll', 'libspine_godot.windows.template_release.x86_64.dll') | ForEach-Object { @{ path = (Join-Path $gameRoot $_); sha256 = Get-FileSha256 -Path (Join-Path $gameRoot $_) } }
     $compiled = @(Get-ChildItem -LiteralPath $out -File | Where-Object { $_.Extension -in @('.cs', '.csproj') -or $_.Name -eq 'UPSTREAM-LICENSE' } | ForEach-Object { @{ path = $_.Name; sha256 = Get-FileSha256 -Path $_.FullName } })
     $artifacts = @(Get-ChildItem -LiteralPath (Join-Path $out 'bin/Release/net9.0') -File | ForEach-Object { @{ path = [IO.Path]::GetRelativePath($out, $_.FullName); sha256 = Get-FileSha256 -Path $_.FullName } })
     $payload = [ordered]@{
@@ -919,7 +955,7 @@ try {
     elseif ($staging) {
         $destination = [IO.Path]::GetFullPath($plannedOutput)
         $destinationParent = Split-Path -Parent $destination
-        New-Item -ItemType Directory -LiteralPath $destinationParent -Force | Out-Null
+        New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
         Move-Item -LiteralPath $out -Destination $destination
         $out = $destination
     }
@@ -1002,8 +1038,8 @@ function Write-Evidence {
     $sourceStage = Join-Path $evidenceStage 'source-snapshot'
     $compiledStage = Join-Path $evidenceStage 'compiled'
     try {
-        New-Item -ItemType Directory -LiteralPath $sourceStage -Force | Out-Null
-        New-Item -ItemType Directory -LiteralPath $compiledStage -Force | Out-Null
+        New-Item -ItemType Directory -Path $sourceStage -Force | Out-Null
+        New-Item -ItemType Directory -Path $compiledStage -Force | Out-Null
 
         $stagedCopies = [System.Collections.Generic.List[object]]::new()
         foreach ($file in @(Get-ChildItem -LiteralPath $Root -File | Where-Object { $_.Extension -in @('.cs', '.csproj') -or $_.Name -in @('UPSTREAM-LICENSE', 'RANDOM-FORESEER-LICENSE', 'SOLVER-LICENSE') } | Sort-Object Name)) {

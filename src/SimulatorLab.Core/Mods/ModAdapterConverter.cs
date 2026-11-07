@@ -193,7 +193,7 @@ public static class ModAdapterConverter
                 switch (kind)
                 {
                     case "Character": characters.Add(new(id, name, Sorted(input.StartingCardIds), Sorted(input.StartingRelicIds), Sorted(input.PowerIds))); break;
-                    case "Card": cards.Add(new(id, name, input.Cost!.Value, input.Description ?? "", objectResources, objectHooks)); break;
+                    case "Card": cards.Add(new(id, name, input.Cost!.Value, input.Description ?? "", objectResources, objectHooks, input.IsGeneratedCard)); break;
                     case "Relic": relics.Add(new(id, name, objectHooks, objectResources)); break;
                     case "Power": powers.Add(new(id, name, input.Duration, objectHooks, objectResources)); break;
                     case "Enemy": enemies.Add(new(id, name, Sorted(input.IntentIds), objectHooks)); break;
@@ -291,7 +291,11 @@ public static class ModAdapterConverter
 
     private static void ValidateObjectValues(AdapterObjectInput input, string kind, string id, List<AdapterErrorRecord> errors)
     {
-        if (kind == "Card" && (!input.Cost.HasValue || input.Cost.Value < 0)) errors.Add(AdapterErrorRecord.Create(AdapterErrorCode.InvalidValue, id, $"/objects/{id}/cost", "card cost must be zero or greater"));
+        // The game uses canonical cost -1 for generated/token cards that are
+        // not ordinary hand-play cards (for example Watcher's Wish tokens).
+        // Only an adapter that explicitly proves that semantic may preserve
+        // the sentinel; ordinary inputs still fail closed at -1 and below.
+        if (kind == "Card" && (!input.Cost.HasValue || input.Cost.Value < 0 && !(input.Cost.Value == -1 && input.IsGeneratedCard))) errors.Add(AdapterErrorRecord.Create(AdapterErrorCode.InvalidValue, id, $"/objects/{id}/cost", "card cost must be zero or an explicitly identified generated-card sentinel -1"));
         if (kind == "Power" && input.Duration is < 0) errors.Add(AdapterErrorRecord.Create(AdapterErrorCode.InvalidValue, id, $"/objects/{id}/duration", "power duration cannot be negative"));
     }
 

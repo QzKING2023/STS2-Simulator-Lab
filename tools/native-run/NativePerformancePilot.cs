@@ -27,6 +27,12 @@ internal static class NativePerformancePilot
     }
     internal static CharacterModel Select(string scenario)
     {
+        if (WatcherNativeModLoop.Enabled)
+        {
+            var watcher = ModelDb.All.OfType<CharacterModel>().Where(c => c.GetType().Assembly.GetName().Name == "Watcher" && c.GetType().Name == "Watcher").ToArray();
+            if (watcher.Length != 1) throw new NotSupportedException("Watcher character was not registered exactly once");
+            return watcher[0];
+        }
         if(!IsScenario(scenario)&&!IsFull(NativeSolverCoordinator.Configuration))return ModelDb.Get<Ironclad>();
         string requested=NativeSolverCoordinator.Configuration!.Character;
         var matches=ModelDb.All.OfType<CharacterModel>().Where(c=>c.GetType().Assembly==typeof(Ironclad).Assembly&&c.GetType().Name==requested).ToArray();

@@ -8,6 +8,7 @@
     <AssemblyName>SimulatorLab.ModWorker</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="WatcherStage6Program.cs" />
     <ProjectReference Include="../../src/SimulatorLab.Core/SimulatorLab.Core.csproj" />
   </ItemGroup>
 </Project>

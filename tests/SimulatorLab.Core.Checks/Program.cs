@@ -349,6 +349,21 @@ var normalAdapter = ModAdapterConverter.ConvertJson(File.ReadAllText(Path.Combin
 Check("adapter normal fixture enters all standard models", normalAdapter.IsSuccess && normalAdapter.Model is { Characters.Count: 1, Cards.Count: 1, Relics.Count: 1, Powers.Count: 1, Enemies.Count: 1, Encounters.Count: 1, Events.Count: 1, Rewards.Count: 1 } && normalAdapter.Model.ResourceResults.Count == 3);
 Check("adapter normal fixture commits atomically", normalAdapter.Report.RegistryCommitted && adapterRegistry.PackageCount == 1 && adapterRegistry.DefinitionCount == 8);
 Check("adapter normal fixture sorts definition ids", normalAdapter.Model is not null && normalAdapter.Model.AllIds.SequenceEqual(normalAdapter.Model.AllIds.OrderBy(x => x, StringComparer.Ordinal)));
+var generatedToken = ModAdapterConverter.Convert(new ModAdapterDocument(
+    "Watcher", "Watcher", "1.5.14", "0.111.0", "fixture/generated-token",
+    [new AdapterFileInput("Watcher.dll", true)], [], [],
+    [new AdapterObjectInput("Card", "CARD.WATCHER-TOKEN", "Generated token", Cost: -1, IsGeneratedCard: true)], [], 1), new ModDefinitionRegistry());
+Check("adapter preserves canonical generated-card cost sentinel", generatedToken.IsSuccess && generatedToken.Model!.Cards.Single().Cost == -1);
+var unclassifiedNegative = ModAdapterConverter.Convert(new ModAdapterDocument(
+    "Watcher", "Watcher", "1.5.14", "0.111.0", "fixture/unclassified-negative",
+    [new AdapterFileInput("Watcher.dll", true)], [], [],
+    [new AdapterObjectInput("Card", "CARD.WATCHER-UNCLASSIFIED", "Unclassified card", Cost: -1)], [], 1), new ModDefinitionRegistry());
+Check("adapter rejects unclassified generated-card sentinel", !unclassifiedNegative.IsSuccess && unclassifiedNegative.Errors.Any(x => x.Code == AdapterErrorCode.InvalidValue));
+var malformedNegative = ModAdapterConverter.Convert(new ModAdapterDocument(
+    "Watcher", "Watcher", "1.5.14", "0.111.0", "fixture/malformed-negative",
+    [new AdapterFileInput("Watcher.dll", true)], [], [],
+    [new AdapterObjectInput("Card", "CARD.WATCHER-BAD", "Malformed card", Cost: -2)], [], 1), new ModDefinitionRegistry());
+Check("adapter rejects noncanonical negative card cost", !malformedNegative.IsSuccess && malformedNegative.Errors.Any(x => x.Code == AdapterErrorCode.InvalidValue));
 var shuffledAdapter = ModAdapterConverter.ConvertJson(File.ReadAllText(Path.Combine(adapterFixtureRoot, "normal-shuffled.json")), "fixture/normal-shuffled.json", new ModDefinitionRegistry());
 Check("adapter shuffled fixture is normalized deterministically", shuffledAdapter.IsSuccess && shuffledAdapter.Model is not null && shuffledAdapter.Model.AllIds.SequenceEqual(shuffledAdapter.Model.AllIds.OrderBy(x => x, StringComparer.Ordinal)) && shuffledAdapter.Model.Events.Single().OptionIds.SequenceEqual(["accept", "leave"]));
 var normalRepeatA = ModAdapterConverter.ConvertJson(File.ReadAllText(Path.Combine(adapterFixtureRoot, "normal.json")), "fixture/normal.json", new ModDefinitionRegistry());

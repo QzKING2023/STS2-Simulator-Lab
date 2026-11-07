@@ -46,13 +46,19 @@ public sealed record CharacterDefinition(
     IReadOnlyList<string> StartingRelicIds,
     IReadOnlyList<string> PowerIds);
 
+/// <summary>
+/// A standard card definition.  Cost -1 is reserved for the game's canonical
+/// generated/token-card sentinel and must be accompanied by IsGeneratedCard;
+/// ordinary playable cards use zero or greater.
+/// </summary>
 public sealed record CardDefinition(
     string Id,
     string DisplayName,
     int Cost,
     string Description,
     IReadOnlyList<ResourceResult> ResourceResults,
-    IReadOnlyList<HookCapability> Hooks);
+    IReadOnlyList<HookCapability> Hooks,
+    bool IsGeneratedCard = false);
 
 public sealed record RelicDefinition(
     string Id,
