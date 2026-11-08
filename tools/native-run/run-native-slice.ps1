@@ -147,6 +147,7 @@ $start=[DateTime]::UtcNow
 $psi=[Diagnostics.ProcessStartInfo]::new('dotnet');$psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
 $psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
 if($env:SIMULATORLAB_KAGUYA_STAGE8 -eq '1'){$psi.Environment['SIMULATORLAB_KAGUYA_OUTPUT']=$out}
+if($env:SIMULATORLAB_MINION_STAGE9 -eq '1'){$psi.Environment['SIMULATORLAB_MINION_OUTPUT']=$out}
 foreach($argument in $arguments){$psi.ArgumentList.Add([string]$argument)}
 $clock=[Diagnostics.Stopwatch]::StartNew()
 $child=[Diagnostics.Process]::Start($psi)

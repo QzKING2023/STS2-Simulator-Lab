@@ -300,7 +300,7 @@ internal static partial class Program
             if(replayPath!=null){replay=JsonDocument.Parse(File.ReadAllText(replayPath)).RootElement.EnumerateArray().Select(e=>e.Clone()).ToArray();if(NativeSolverCoordinator.Active&&!scenario.EndsWith("-replay")){if(replay.Length!=NativeSolverCoordinator.Configuration!.PrefixCount)throw new NativeActionRejectedException("Coordinator requires exact complete prefix route");}if(NativeBranchSearch.Active){if(replay.Length<NativeBranchSearch.Plan!.PrefixCount)throw new NativeActionRejectedException("Short branch prefix");replay=replay.Take(NativeBranchSearch.Plan.PrefixCount).ToArray();}}
             AssemblyResolver.VerifyGame();
             loop=new();SynchronizationContext.SetSynchronizationContext(loop);
-            using(NativeTiming.Measure("host-initialization")){NativeHost.Install();if(WatcherNativeModLoop.Enabled)GameBootstrap.ModelTypeAugmenter=WatcherNativeModLoop.IncludeModels;else if(KaguyaNativeModLoop.Enabled)GameBootstrap.ModelTypeAugmenter=KaguyaNativeModLoop.IncludeModels;GameBootstrap.InitializeStaticState();if(WatcherNativeModLoop.Enabled){WatcherNativeModLoop.Initialize();Console.WriteLine("[watcher] finishing ModelDb");Console.Out.Flush();GameBootstrap.FinishModelDb();Console.WriteLine("[watcher] ModelDb finished");Console.Out.Flush();}else if(KaguyaNativeModLoop.Enabled){KaguyaNativeModLoop.Initialize();Console.WriteLine("[kaguya] finishing ModelDb");Console.Out.Flush();GameBootstrap.FinishModelDb();Console.WriteLine("[kaguya] ModelDb finished");Console.Out.Flush();}NativeSolverProfile.Initialize(output);NativeHost.Ensure();}
+            using(NativeTiming.Measure("host-initialization")){NativeHost.Install();if(WatcherNativeModLoop.Enabled)GameBootstrap.ModelTypeAugmenter=WatcherNativeModLoop.IncludeModels;else if(KaguyaNativeModLoop.Enabled)GameBootstrap.ModelTypeAugmenter=KaguyaNativeModLoop.IncludeModels;else if(MinionNativeModLoop.Enabled)GameBootstrap.ModelTypeAugmenter=MinionNativeModLoop.IncludeModels;GameBootstrap.InitializeStaticState();if(WatcherNativeModLoop.Enabled){WatcherNativeModLoop.Initialize();Console.WriteLine("[watcher] finishing ModelDb");Console.Out.Flush();GameBootstrap.FinishModelDb();Console.WriteLine("[watcher] ModelDb finished");Console.Out.Flush();}else if(KaguyaNativeModLoop.Enabled){KaguyaNativeModLoop.Initialize();Console.WriteLine("[kaguya] finishing ModelDb");Console.Out.Flush();GameBootstrap.FinishModelDb();Console.WriteLine("[kaguya] ModelDb finished");Console.Out.Flush();}else if(MinionNativeModLoop.Enabled){MinionNativeModLoop.Initialize();Console.WriteLine("[minion] finishing ModelDb");Console.Out.Flush();GameBootstrap.FinishModelDb();Console.WriteLine("[minion] ModelDb finished");Console.Out.Flush();}NativeSolverProfile.Initialize(output);NativeHost.Ensure();}
             NativeHost.Observe=kind=>Observe(kind);
             selectorScope=CardSelectCmd.UseSelector(NativeChoices.Instance);
             if(replayPath!=null){var cp=Path.Combine(Path.GetDirectoryName(replayPath)!,"choices.json");if(!File.Exists(cp))throw new NativeActionRejectedException("Missing frozen choice transcript");NativeChoices.LoadReplay(cp);NativeChoices.Replaying=true;
@@ -338,6 +338,15 @@ internal static partial class Program
             if(control=="stale")new NativeDecisionTicket(run,sequence,"before","Travel").Consume(run,sequence+1,"before","Travel");
             if(WatcherNativeModLoop.IsScenario(scenario)){Travel();Ready();Battle();if(terminal==NativeRunTerminal.Death)stop=NativeRunStop.Completed;else{Rewards();Travel();Ready();stop=NativeRunStop.SliceBoundary;}}
             else if(KaguyaNativeModLoop.IsScenario(scenario)){KaguyaEventProbe();stop=NativeRunStop.SliceBoundary;}
+            else if(MinionNativeModLoop.IsScenario(scenario)){
+                if(MinionNativeModLoop.IsRealCombatScenario(scenario)){
+                    Travel();
+                    RunMinionRealCombatSlice(seed);
+                } else {
+                    MinionNativeModLoop.RunLifecycleFixture(seed);
+                }
+                stop=NativeRunStop.SliceBoundary;
+            }
             else if(NativeSolverRun.Active){SolverTwoBattles();stop=terminal==NativeRunTerminal.Death?NativeRunStop.Completed:NativeRunStop.SliceBoundary;}
             else if(NativeEventFixtures.Active){AcceptanceEventFixture();stop=NativeRunStop.SliceBoundary;}
             else if(scenario=="solver-power-death"){Travel();Ready();SolverPowerDeathFixture();stop=NativeRunStop.SliceBoundary;}
@@ -388,6 +397,7 @@ internal static partial class Program
         if(NativeFullRun.Active)FullRunReport();
         if(WatcherNativeModLoop.Enabled)WatcherNativeModLoop.WriteProbe(output,seed,replayPath!=null,terminal,stop,error);
         if(KaguyaNativeModLoop.Enabled)KaguyaNativeModLoop.WriteProbe(output,seed,replayPath!=null,terminal,stop,error);
+        if(MinionNativeModLoop.Enabled)MinionNativeModLoop.WriteProbe(output,seed,replayPath!=null||scenario.EndsWith("-replay",StringComparison.Ordinal),terminal,stop,error);
         if(dispatched>confirmed && error!=null)terminal=NativeRunTerminal.Unknown;
         var result=new NativeRunResultV1{Terminal=terminal,Stop=stop,Dispatched=dispatched,Confirmed=confirmed,DataComplete=error==null,LastBoundary=last,Error=error};
         Write("result.json",new{result,validation=result.Validate(),rawExit=result.ExitCode,scope=scenario,provenance,trace=seal,choicesSubmitted=NativeChoices.Submitted,guards=new{NativeHost.ProgressWrites,NativeHost.ReplayWrites,NativeHost.TelemetryCalls,faults=NativeHost.Faults.Select(e=>e.ToString()).ToArray(),isolation=NativeHost.IsolationEvidence},seams=NativeHost.Seams,bootstrap=GameBootstrap.Bypasses,loadedAssemblies=AppDomain.CurrentDomain.GetAssemblies().Select(a=>a.GetName().Name).Order().ToArray()});

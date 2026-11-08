@@ -13,8 +13,13 @@ internal static class AssemblyResolver
     [ModuleInitializer] internal static void Install() => AssemblyLoadContext.Default.Resolving += (context,name) =>
     {
         string simple=name.Name??"";
-        if(simple is "MyMod" or "CombatSolver" or "BaseLib" || simple.StartsWith("STS2-RitsuLib"))
+        if(simple is "MyMod" or "CombatSolver" or "BaseLib" || simple.StartsWith("STS2-RitsuLib") ||
+            simple is "MinionLib" or "shadowversebydmod")
+        {
+            if (MinionNativeModLoop.Enabled)
+                return MinionNativeModLoop.Resolve(context, name);
             return NativeSolverProfile.Resolve(context,name);
+        }
         string path=Path.Combine((string)AppContext.GetData("Sts2DataDir")!, simple+".dll");
         return File.Exists(path)?context.LoadFromAssemblyPath(path):null;
     };
