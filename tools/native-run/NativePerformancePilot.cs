@@ -33,6 +33,7 @@ internal static class NativePerformancePilot
             if (watcher.Length != 1) throw new NotSupportedException("Watcher character was not registered exactly once");
             return watcher[0];
         }
+        if (KaguyaNativeModLoop.Enabled) return ModelDb.Get<Ironclad>();
         if(!IsScenario(scenario)&&!IsFull(NativeSolverCoordinator.Configuration))return ModelDb.Get<Ironclad>();
         string requested=NativeSolverCoordinator.Configuration!.Character;
         var matches=ModelDb.All.OfType<CharacterModel>().Where(c=>c.GetType().Assembly==typeof(Ironclad).Assembly&&c.GetType().Name==requested).ToArray();

@@ -175,7 +175,7 @@ internal static partial class Program
                             from target in new Creature?[]{null}.Concat(c.Creatures.Cast<Creature?>())
                             where card.CanPlayTargeting(target)
                             select (card,target)).ToArray();
-            if(NativeEventFlow.Aggressive||NativeMajor.Active)candidates=candidates.OrderByDescending(x=>x.card.Type==MegaCrit.Sts2.Core.Entities.Cards.CardType.Attack).ThenByDescending(x=>x.card.Id.ToString()=="CARD.BASH").ToArray();
+            if(NativeEventFlow.Aggressive||NativeMajor.Active||KaguyaNativeModLoop.Enabled)candidates=candidates.OrderByDescending(x=>x.card.Type==MegaCrit.Sts2.Core.Entities.Cards.CardType.Attack).ThenByDescending(x=>x.card.Id.ToString()=="CARD.BASH").ToArray();
             if(NativeMajor.Active&&c.Enemies.Any(x=>x.Monster?.IntendsToAttack==true)&&player!.Creature.Block<10)candidates=candidates.OrderByDescending(x=>x.card.Id.ToString()=="CARD.DEFEND_IRONCLAD").ToArray();
             if(NativePreparation.Active)candidates=PreparedCandidates(candidates);
             Observe("combat-candidates",candidates.Select(x=>new{card=Id(x.card),model=x.card.Id.ToString(),target=x.target==null?null:Id(x.target)}).ToArray());
@@ -215,7 +215,7 @@ internal static partial class Program
             foreach(var reward in set.Rewards.Where(r=>r is GoldReward)){
                 Action("TakeGold",new{setId=set.Id,index=set.Rewards.ToList().IndexOf(reward)},()=>Await(manager.RewardsSetSynchronizer.SelectLocalReward(reward),"Native gold collection"));
             }
-            if(scenario=="slice-take"||WatcherNativeModLoop.Enabled||NativeEventFlow.Active&&!NativeEventFlow.Natural){
+            if(scenario=="slice-take"||WatcherNativeModLoop.Enabled||KaguyaNativeModLoop.Enabled||NativeEventFlow.Active&&!NativeEventFlow.Natural){
                 var reward=set.Rewards.OfType<CardReward>().Single();
                 if(!NativeChoices.Replaying)NativeChoices.Planned.Enqueue([NativeEventFlow.Active?Math.Max(0,reward.Cards.ToList().FindIndex(c=>c.Type==MegaCrit.Sts2.Core.Entities.Cards.CardType.Attack)):1]);
                 var original=player.Deck.Cards.ToArray();
@@ -300,7 +300,7 @@ internal static partial class Program
             if(replayPath!=null){replay=JsonDocument.Parse(File.ReadAllText(replayPath)).RootElement.EnumerateArray().Select(e=>e.Clone()).ToArray();if(NativeSolverCoordinator.Active&&!scenario.EndsWith("-replay")){if(replay.Length!=NativeSolverCoordinator.Configuration!.PrefixCount)throw new NativeActionRejectedException("Coordinator requires exact complete prefix route");}if(NativeBranchSearch.Active){if(replay.Length<NativeBranchSearch.Plan!.PrefixCount)throw new NativeActionRejectedException("Short branch prefix");replay=replay.Take(NativeBranchSearch.Plan.PrefixCount).ToArray();}}
             AssemblyResolver.VerifyGame();
             loop=new();SynchronizationContext.SetSynchronizationContext(loop);
-            using(NativeTiming.Measure("host-initialization")){NativeHost.Install();if(WatcherNativeModLoop.Enabled)GameBootstrap.ModelTypeAugmenter=WatcherNativeModLoop.IncludeModels;GameBootstrap.InitializeStaticState();if(WatcherNativeModLoop.Enabled){WatcherNativeModLoop.Initialize();Console.WriteLine("[watcher] finishing ModelDb");Console.Out.Flush();GameBootstrap.FinishModelDb();Console.WriteLine("[watcher] ModelDb finished");Console.Out.Flush();}NativeSolverProfile.Initialize(output);NativeHost.Ensure();}
+            using(NativeTiming.Measure("host-initialization")){NativeHost.Install();if(WatcherNativeModLoop.Enabled)GameBootstrap.ModelTypeAugmenter=WatcherNativeModLoop.IncludeModels;else if(KaguyaNativeModLoop.Enabled)GameBootstrap.ModelTypeAugmenter=KaguyaNativeModLoop.IncludeModels;GameBootstrap.InitializeStaticState();if(WatcherNativeModLoop.Enabled){WatcherNativeModLoop.Initialize();Console.WriteLine("[watcher] finishing ModelDb");Console.Out.Flush();GameBootstrap.FinishModelDb();Console.WriteLine("[watcher] ModelDb finished");Console.Out.Flush();}else if(KaguyaNativeModLoop.Enabled){KaguyaNativeModLoop.Initialize();Console.WriteLine("[kaguya] finishing ModelDb");Console.Out.Flush();GameBootstrap.FinishModelDb();Console.WriteLine("[kaguya] ModelDb finished");Console.Out.Flush();}NativeSolverProfile.Initialize(output);NativeHost.Ensure();}
             NativeHost.Observe=kind=>Observe(kind);
             selectorScope=CardSelectCmd.UseSelector(NativeChoices.Instance);
             if(replayPath!=null){var cp=Path.Combine(Path.GetDirectoryName(replayPath)!,"choices.json");if(!File.Exists(cp))throw new NativeActionRejectedException("Missing frozen choice transcript");NativeChoices.LoadReplay(cp);NativeChoices.Replaying=true;
@@ -337,6 +337,7 @@ internal static partial class Program
             Opening();
             if(control=="stale")new NativeDecisionTicket(run,sequence,"before","Travel").Consume(run,sequence+1,"before","Travel");
             if(WatcherNativeModLoop.IsScenario(scenario)){Travel();Ready();Battle();if(terminal==NativeRunTerminal.Death)stop=NativeRunStop.Completed;else{Rewards();Travel();Ready();stop=NativeRunStop.SliceBoundary;}}
+            else if(KaguyaNativeModLoop.IsScenario(scenario)){KaguyaEventProbe();stop=NativeRunStop.SliceBoundary;}
             else if(NativeSolverRun.Active){SolverTwoBattles();stop=terminal==NativeRunTerminal.Death?NativeRunStop.Completed:NativeRunStop.SliceBoundary;}
             else if(NativeEventFixtures.Active){AcceptanceEventFixture();stop=NativeRunStop.SliceBoundary;}
             else if(scenario=="solver-power-death"){Travel();Ready();SolverPowerDeathFixture();stop=NativeRunStop.SliceBoundary;}
@@ -386,6 +387,7 @@ internal static partial class Program
         Write("final-state.json",State());
         if(NativeFullRun.Active)FullRunReport();
         if(WatcherNativeModLoop.Enabled)WatcherNativeModLoop.WriteProbe(output,seed,replayPath!=null,terminal,stop,error);
+        if(KaguyaNativeModLoop.Enabled)KaguyaNativeModLoop.WriteProbe(output,seed,replayPath!=null,terminal,stop,error);
         if(dispatched>confirmed && error!=null)terminal=NativeRunTerminal.Unknown;
         var result=new NativeRunResultV1{Terminal=terminal,Stop=stop,Dispatched=dispatched,Confirmed=confirmed,DataComplete=error==null,LastBoundary=last,Error=error};
         Write("result.json",new{result,validation=result.Validate(),rawExit=result.ExitCode,scope=scenario,provenance,trace=seal,choicesSubmitted=NativeChoices.Submitted,guards=new{NativeHost.ProgressWrites,NativeHost.ReplayWrites,NativeHost.TelemetryCalls,faults=NativeHost.Faults.Select(e=>e.ToString()).ToArray(),isolation=NativeHost.IsolationEvidence},seams=NativeHost.Seams,bootstrap=GameBootstrap.Bypasses,loadedAssemblies=AppDomain.CurrentDomain.GetAssemblies().Select(a=>a.GetName().Name).Order().ToArray()});

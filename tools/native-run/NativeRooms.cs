@@ -11,6 +11,7 @@ using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.ValueProps;
 using SimulatorLab.Core;
+using SimulatorLab.Core.Mods;
 
 namespace OfflineSearchHarness;
 internal static class NativeRooms
@@ -197,6 +198,11 @@ internal static partial class Program
         if((NativeFullRun.Active||NativeEventFixtures.Active)&&ev is Reflections reflections){NativeReflections.Enter(reflections);return;}
         if((NativeFullRun.Active||NativeEventFixtures.Active)&&NativeSimpleEventEntry.Supports(ev)){NativeSimpleEventEntry.Enter(ev);return;}
         if(NativeFullRun.Active&&ev is SlipperyBridge bridge){NativeSlipperyBridge.Enter(bridge);return;}
+        if (KaguyaNativeModLoop.Enabled && ev.GetType().Assembly.GetName().Name == KaguyaStage8Constants.ModId)
+        {
+            ev.OnRoomEnter();
+            return;
+        }
         if(!(ev is AbyssalBaths or SunkenStatue or DenseVegetation||(NativeEventFlow.Active||NativePreparation.Active)&&ev is WhisperingHollow or BattlewornDummy||NativeNaturalBoss.Active&&ev is AncientEventModel||NativeNaturalBoss.Act2&&ev is RanwidTheElder or DollRoom or InfestedAutomaton or StoneOfAllTime or ThisOrThat or Symbiote||NativeNaturalBoss.Third&&ev is FakeMerchant or HungryForMushrooms or PotionCourier)||ev.GetType().GetMethod(nameof(EventModel.OnRoomEnter))!.DeclaringType!=typeof(EventModel))throw new NotSupportedException("4B event model/entry not audited: "+ev.Id);
         // These sealed models inherit the no-op entry. Original AfterEventStarted
         // already ran in EventRoom.EnterInternal; no other model is inferred safe.

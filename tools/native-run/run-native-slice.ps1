@@ -146,6 +146,7 @@ $start=[DateTime]::UtcNow
 . (Join-Path $PSScriptRoot 'NativeProcessBudget.ps1')
 $psi=[Diagnostics.ProcessStartInfo]::new('dotnet');$psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
 $psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
+if($env:SIMULATORLAB_KAGUYA_STAGE8 -eq '1'){$psi.Environment['SIMULATORLAB_KAGUYA_OUTPUT']=$out}
 foreach($argument in $arguments){$psi.ArgumentList.Add([string]$argument)}
 $clock=[Diagnostics.Stopwatch]::StartNew()
 $child=[Diagnostics.Process]::Start($psi)

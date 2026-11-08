@@ -38,7 +38,7 @@ internal static class NativeSolverProfile
 #else
     internal const bool Enabled=false;
     internal static Assembly Resolve(AssemblyLoadContext context,AssemblyName name)=>throw new InvalidOperationException("Native-only host refuses Mod dependency: "+name.Name);
-    internal static void Ensure(){if(WatcherNativeModLoop.Enabled)return;if(AppDomain.CurrentDomain.GetAssemblies().Any(a=>a.GetName().Name is "MyMod" or "CombatSolver" or "BaseLib"||a.GetName().Name!.StartsWith("STS2-RitsuLib")))throw new InvalidOperationException("Mod assembly loaded in native host");}
+    internal static void Ensure(){if(WatcherNativeModLoop.Enabled||KaguyaNativeModLoop.Enabled)return;if(AppDomain.CurrentDomain.GetAssemblies().Any(a=>a.GetName().Name is "MyMod" or "CombatSolver" or "BaseLib"||a.GetName().Name!.StartsWith("STS2-RitsuLib")))throw new InvalidOperationException("Mod assembly loaded in native host");}
     internal static void Initialize(string output){}
 #endif
 }
