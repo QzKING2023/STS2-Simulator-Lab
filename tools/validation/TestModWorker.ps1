@@ -49,5 +49,16 @@ $missingDependency = Invoke-WorkerCase 'dependency-missing' @{snapshotDirectory=
 if ($missingDependency.Manifest.errors.stableCode -notcontains 'MOD-W004') { throw 'missing dependency was not classified' }
 $blocked = Invoke-WorkerCase 'blocked-io' @{snapshotDirectory=$snapshot;snapshotManifestPath=$snapshotManifest;modId='Watcher';targetGameVersion='0.111.0';seed='MOD-WORKER-DETERMINISTIC';accessAttempts=@(@{operation='enumerate-workshop';path='D:\SteamLibrary\steamapps\workshop\content\2868840'});writeAttempts=@(@{operation='save';path='C:\formal\saves\save.json'})}
 if ($blocked.ExitCode -ne 2 -or $blocked.Manifest.status -ne 'blocked' -or $blocked.Manifest.errors.stableCode -notcontains 'MOD-W006' -or $blocked.Manifest.errors.stableCode -notcontains 'MOD-W007') { throw 'blocked access/write attempts were not isolated' }
+$intent = Invoke-WorkerCase 'intentgraph2-candidates' @{snapshotDirectory=$snapshot;snapshotManifestPath=$snapshotManifest;modId='intentgraph2';targetGameVersion='0.111.0';seed='MOD-WORKER-DETERMINISTIC'}
+if ($intent.ExitCode -ne 0 -or $intent.Manifest.status -ne 'succeeded') { throw 'intentgraph2 candidate selection did not succeed' }
+$intentCandidates = @($intent.Manifest.discovery.assemblyCandidates)
+$legacyIntent = $intentCandidates | Where-Object { $_.relativePath -eq 'intentgraph2core-lt-0.110.0.dll' }
+$selectedIntent = $intentCandidates | Where-Object { $_.relativePath -eq 'intentgraph2core.dll' }
+if ($legacyIntent.selection -ne 'rejected' -or $legacyIntent.declaredGameVersion -ne '0.110.0' -or $legacyIntent.selectionReason -notmatch 'does not match target game 0\.111\.0') { throw 'intentgraph2 legacy candidate was not explicitly rejected' }
+if ($selectedIntent.selection -ne 'selected' -or @($intent.Manifest.discovery.assemblies | Where-Object { $_.relativePath -eq 'intentgraph2core-lt-0.110.0.dll' }).Count -ne 0) { throw 'intentgraph2 selected the wrong duplicate assembly' }
+$shadow = Invoke-WorkerCase 'shadowverse-large-file' @{snapshotDirectory=$snapshot;snapshotManifestPath=$snapshotManifest;modId='shadowversebydmod';targetGameVersion='0.111.0';seed='MOD-WORKER-DETERMINISTIC'}
+if ($shadow.ExitCode -ne 0 -or $shadow.Manifest.status -ne 'succeeded' -or $shadow.Manifest.errors.Count -ne 0) { throw 'shadowverse large-file discovery did not succeed' }
+$shadowPck = @($shadow.Manifest.discovery.files | Where-Object { $_.relativePath -eq 'shadowversebydmod.pck' })
+if ($shadowPck.Count -ne 1 -or [int64]$shadowPck[0].length -le 2147483648) { throw 'shadowverse large PCK was not hashed without truncation' }
 
-Write-Output "PASS mod-worker normal=$($normalA.Manifest.discovery.digest) deterministic=True failures=5"
+Write-Output "PASS mod-worker normal=$($normalA.Manifest.discovery.digest) deterministic=True failures=7 intentgraph2Candidates=$($intentCandidates.Count) shadowverseBytes=$($shadowPck[0].length)"

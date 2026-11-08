@@ -74,6 +74,16 @@ public sealed record ModWorkerAssemblyEvidence(
     string? AssemblyVersion,
     string ModuleVersionId);
 
+public sealed record ModWorkerAssemblyCandidateEvidence(
+    string ModId,
+    string RelativePath,
+    string AssemblyName,
+    string? AssemblyVersion,
+    string ModuleVersionId,
+    string? DeclaredGameVersion,
+    string Selection,
+    string SelectionReason);
+
 public sealed record ModWorkerDiscoverySummary(
     string Schema,
     string TargetGameVersion,
@@ -81,6 +91,7 @@ public sealed record ModWorkerDiscoverySummary(
     IReadOnlyList<string> DependencyClosure,
     IReadOnlyList<ModWorkerFileEvidence> Files,
     IReadOnlyList<ModWorkerAssemblyEvidence> Assemblies,
+    IReadOnlyList<ModWorkerAssemblyCandidateEvidence> AssemblyCandidates,
     IReadOnlyList<string> PckFiles,
     IReadOnlyList<string> Errors,
     string Digest);

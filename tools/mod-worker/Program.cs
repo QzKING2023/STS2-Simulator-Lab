@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Reflection;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
 using System.Runtime.Loader;
 using System.Security.Cryptography;
 using System.Text;
@@ -306,29 +308,32 @@ static BuildEvidence ReadBuildEvidence(string? path, string output, string snaps
 static ModWorkerDiscoverySummary? Discover(string modId, DependencyResolution resolution, IReadOnlyList<ApprovedFile> approved, List<ModWorkerError> errors, ref ModWorkerIsolationEvidence isolation)
 {
     var assemblies = new List<ModWorkerAssemblyEvidence>();
+    var assemblyCandidates = new List<ModWorkerAssemblyCandidateEvidence>();
     var files = new List<ModWorkerFileEvidence>();
     var pcks = new List<string>();
     var dlls = approved.Where(x => x.Kind == "dll").OrderBy(x => x.ModId, StringComparer.Ordinal).ThenBy(x => x.File.RelativePath, StringComparer.Ordinal).ToList();
-    var loadPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    var metadata = new List<AssemblyMetadataEvidence>();
     try
     {
         foreach (var entry in dlls)
         {
             var path = FullPathFromApproved(entry);
             ValidateFile(entry, path, errors);
-            var name = AssemblyName.GetAssemblyName(path);
-            if (!string.IsNullOrWhiteSpace(name.Name)) loadPaths[name.Name] = path;
+            if (errors.Count > 0) continue;
+            metadata.Add(ReadAssemblyMetadata(path, entry));
         }
+        if (errors.Count > 0) return null;
+        var loadPaths = SelectAssemblyCandidates(modId, metadata, assemblyCandidates, errors);
         if (errors.Count > 0) return null;
         var alc = new ApprovedLoadContext(loadPaths);
         try
         {
-            foreach (var entry in dlls)
+            foreach (var selected in metadata.Where(x => loadPaths.TryGetValue(x.Name, out var selectedPath) &&
+                string.Equals(selectedPath, x.Path, StringComparison.OrdinalIgnoreCase)))
             {
-                var path = FullPathFromApproved(entry);
-                var name = AssemblyName.GetAssemblyName(path);
-                var assembly = alc.LoadFromAssemblyPath(path);
-                assemblies.Add(new(entry.ModId, entry.File.RelativePath, name.Name ?? "", name.Version?.ToString(), assembly.ManifestModule.ModuleVersionId.ToString("D")));
+                var assembly = alc.LoadFromAssemblyPath(selected.Path);
+                assemblies.Add(new(selected.Entry.ModId, selected.Entry.File.RelativePath, selected.Name,
+                    selected.Version, selected.ModuleVersionId));
             }
             foreach (var entry in approved.Where(x => x.Kind is "dll" or "pck" or "manifest"))
             {
@@ -362,6 +367,7 @@ static ModWorkerDiscoverySummary? Discover(string modId, DependencyResolution re
         dependencyClosure = resolution.DependencyClosure.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
         files = files.OrderBy(x => x.ModId, StringComparer.Ordinal).ThenBy(x => x.RelativePath, StringComparer.Ordinal),
         assemblies = assemblies.OrderBy(x => x.ModId, StringComparer.Ordinal).ThenBy(x => x.RelativePath, StringComparer.Ordinal),
+        assemblyCandidates = assemblyCandidates.OrderBy(x => x.ModId, StringComparer.Ordinal).ThenBy(x => x.AssemblyName, StringComparer.OrdinalIgnoreCase).ThenBy(x => x.RelativePath, StringComparer.Ordinal),
         pcks = pcks.OrderBy(x => x, StringComparer.Ordinal),
         errors = errors.Select(x => x.StableSummary).OrderBy(x => x, StringComparer.Ordinal)
     };
@@ -370,6 +376,7 @@ static ModWorkerDiscoverySummary? Discover(string modId, DependencyResolution re
         resolution.DependencyClosure.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
         files.OrderBy(x => x.ModId, StringComparer.Ordinal).ThenBy(x => x.RelativePath, StringComparer.Ordinal).ToArray(),
         assemblies.OrderBy(x => x.ModId, StringComparer.Ordinal).ThenBy(x => x.RelativePath, StringComparer.Ordinal).ToArray(),
+        assemblyCandidates.OrderBy(x => x.ModId, StringComparer.Ordinal).ThenBy(x => x.AssemblyName, StringComparer.OrdinalIgnoreCase).ThenBy(x => x.RelativePath, StringComparer.Ordinal).ToArray(),
         pcks.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
         errors.Select(x => x.StableSummary).OrderBy(x => x, StringComparer.Ordinal).ToArray(), digest);
 }
@@ -425,7 +432,90 @@ static void WriteOutputs(string output, string runId, DateTimeOffset started, Mo
 
 static string FullPath(string snapshotDirectory, ApprovedFile entry) => Path.GetFullPath(Path.Combine(snapshotDirectory, entry.SnapshotRelativeRoot, entry.File.RelativePath.Replace('/', Path.DirectorySeparatorChar)));
 static string FullPathFromApproved(ApprovedFile entry) => Path.GetFullPath(Path.Combine(entry.SnapshotDirectory, entry.SnapshotRelativeRoot, entry.File.RelativePath.Replace('/', Path.DirectorySeparatorChar)));
-static string Sha256(string path) => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant();
+static string Sha256(string path)
+{
+    using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024,
+        FileOptions.SequentialScan | FileOptions.Asynchronous);
+    using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+    var buffer = new byte[1024 * 1024];
+    int read;
+    while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
+        hasher.AppendData(buffer, 0, read);
+    return Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant();
+}
+
+static AssemblyMetadataEvidence ReadAssemblyMetadata(string path, ApprovedFile entry)
+{
+    using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024,
+        FileOptions.SequentialScan | FileOptions.Asynchronous);
+    using var pe = new PEReader(stream, PEStreamOptions.LeaveOpen);
+    if (!pe.HasMetadata) throw new BadImageFormatException($"approved DLL has no CLI metadata: {entry.File.RelativePath}");
+    var reader = pe.GetMetadataReader();
+    var definition = reader.GetAssemblyDefinition();
+    var module = reader.GetModuleDefinition();
+    var assemblyName = reader.GetString(definition.Name);
+    var version = definition.Version.ToString();
+    var mvid = reader.GetGuid(module.Mvid).ToString("D");
+    var declaredGameVersion = ExtractDeclaredGameVersion(entry.File.RelativePath);
+    return new(entry, path, assemblyName, version, mvid, declaredGameVersion);
+}
+
+static Dictionary<string, string> SelectAssemblyCandidates(string modId, IReadOnlyList<AssemblyMetadataEvidence> metadata,
+    List<ModWorkerAssemblyCandidateEvidence> evidence, List<ModWorkerError> errors)
+{
+    var loadPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    foreach (var group in metadata.GroupBy(x => x.Name, StringComparer.OrdinalIgnoreCase).OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
+    {
+        var candidates = group.OrderBy(x => x.Entry.File.RelativePath, StringComparer.Ordinal).ToList();
+        var exact = candidates.Where(x => string.Equals(x.DeclaredGameVersion, ModCatalogConstants.TargetGameVersion, StringComparison.Ordinal)).ToList();
+        var unversioned = candidates.Where(x => x.DeclaredGameVersion is null).ToList();
+        AssemblyMetadataEvidence? selected = exact.Count == 1 ? exact[0] : exact.Count == 0 && unversioned.Count == 1 ? unversioned[0] : null;
+
+        if (selected is null)
+        {
+            var reason = exact.Count > 1
+                ? $"multiple candidates declare target game {ModCatalogConstants.TargetGameVersion}"
+                : exact.Count == 0 && unversioned.Count > 1
+                    ? "multiple candidates have no declared game version"
+                    : "no unique candidate matches target game version";
+            foreach (var candidate in candidates)
+                evidence.Add(ToCandidateEvidence(modId, candidate, "rejected", reason));
+            errors.Add(new(ModWorkerErrorCode.UnsupportedVersion, candidates[0].Entry.File.RelativePath,
+                $"assembly identity '{group.Key}' cannot be selected for target game {ModCatalogConstants.TargetGameVersion}: {reason}"));
+            continue;
+        }
+
+        loadPaths[group.Key] = selected.Path;
+        evidence.Add(ToCandidateEvidence(modId, selected, "selected",
+            selected.DeclaredGameVersion is null
+                ? $"unique unversioned candidate selected for target game {ModCatalogConstants.TargetGameVersion}"
+                : $"explicit target game {ModCatalogConstants.TargetGameVersion} candidate selected"));
+        foreach (var candidate in candidates.Where(x => !ReferenceEquals(x, selected)))
+        {
+            var reason = candidate.DeclaredGameVersion is null
+                ? $"rejected because candidate for target game {ModCatalogConstants.TargetGameVersion} was selected"
+                : $"declared game version {candidate.DeclaredGameVersion} does not match target game {ModCatalogConstants.TargetGameVersion}";
+            evidence.Add(ToCandidateEvidence(modId, candidate, "rejected", reason));
+        }
+    }
+    return loadPaths;
+}
+
+static ModWorkerAssemblyCandidateEvidence ToCandidateEvidence(string modId, AssemblyMetadataEvidence candidate,
+    string selection, string reason) => new(modId, candidate.Entry.File.RelativePath, candidate.Name,
+    candidate.Version, candidate.ModuleVersionId, candidate.DeclaredGameVersion, selection, reason);
+
+static string? ExtractDeclaredGameVersion(string relativePath)
+{
+    var name = Path.GetFileNameWithoutExtension(relativePath);
+    var marker = "-0.";
+    var index = name.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+    if (index < 0) return null;
+    var candidate = name[(index + 1)..];
+    var parts = candidate.Split(new[] { '-', '_', '.' }, StringSplitOptions.RemoveEmptyEntries);
+    if (parts.Length != 3 || parts[0] != "0" || !int.TryParse(parts[1], out _) || !int.TryParse(parts[2], out _)) return null;
+    return string.Join('.', parts);
+}
 static string Digest(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 static bool IsProtectedPath(string path)
 {
@@ -459,6 +549,13 @@ sealed record ApprovedFile(string ModId, string SnapshotRelativeRoot, ModFileSum
 {
     public string SnapshotDirectory { get; init; } = "";
 }
+sealed record AssemblyMetadataEvidence(
+    ApprovedFile Entry,
+    string Path,
+    string Name,
+    string? Version,
+    string ModuleVersionId,
+    string? DeclaredGameVersion);
 sealed record BuildEvidence(string? BuildId, string? ContentKey);
 sealed class WorkerFailure : Exception
 {
