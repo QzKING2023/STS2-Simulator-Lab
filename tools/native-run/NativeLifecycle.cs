@@ -15,7 +15,17 @@ internal static class NativeLifecycle
     internal static Task? ActTask;
     internal static bool Won;
     internal static bool Closed;
-    internal static bool IsScenario(string scenario)=>scenario.StartsWith("tail-")||scenario.StartsWith("natural-death")||WatcherNativeModLoop.IsScenario(scenario)||KaguyaNativeModLoop.IsScenario(scenario)||MinionNativeModLoop.IsScenario(scenario);
+    internal static void ReleaseForTeardown()
+    {
+        ActTask = null;
+        Active = false;
+        Scenario = "";
+        Losses = RunEndStarts = RunEndReturns = WinStarts = WinReturns = ActStarts = ActReturns = PlatformRefreshes = 0;
+        Won = false;
+        Closed = false;
+    }
+    internal static bool PendingTaskStateCleared => ActTask is null;
+    internal static bool IsScenario(string scenario)=>scenario.StartsWith("tail-")||scenario.StartsWith("natural-death")||NativeFoundationModLoop.IsScenario(scenario)||WatcherNativeModLoop.IsScenario(scenario)||KaguyaNativeModLoop.IsScenario(scenario)||MinionNativeModLoop.IsScenario(scenario);
     internal static bool CaptureScenario(string scenario)=>NativeVisibleBattle.IsScenario(scenario)||NativeSolverBattle.IsScenario(scenario)||NativeMajor.IsScenario(scenario)||IsScenario(scenario)||NativeRooms.IsScenario(scenario)||NativeRewardProbe.IsScenario(scenario)||NativeMerchant.IsScenario(scenario)||NativeMerchantEconomy.IsScenario(scenario);
     internal static void Install()
     {

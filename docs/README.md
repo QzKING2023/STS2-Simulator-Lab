@@ -8,8 +8,9 @@ The documentation is grouped by the question it answers. Reports keep their orig
 - [Milestone status](milestones/MILESTONE_STATUS.md) records the latest milestone state.
 - [M1 final acceptance](milestones/M1_FINAL_ACCEPTANCE.md) is the sealed M1 result and its declared limits.
 - [Long-term roadmap](milestones/LONG_TERM_ROADMAP.md) records the current direction.
-- [M2 full-run plan](mods/MOD_FULL_RUN_EXECUTION_PLAN.md) defines the role-Mod terminal compatibility target and phase gates.
+- [M2 full-run plan](mods/MOD_FULL_RUN_EXECUTION_PLAN.md) defines the role-Mod flow/content compatibility gates and phase gates.
 - [M2 phase prompts](prompts/MOD_FULL_RUN_PHASE_PROMPTS.md) are the handoff prompts for each independent session.
+- [Architecture decisions](adr/README.md) indexes the M2 compatibility-boundary ADRs.
 - [Agent operating docs](agents/) describe issue tracking, triage labels, and domain-document rules.
 
 ## Topic directories

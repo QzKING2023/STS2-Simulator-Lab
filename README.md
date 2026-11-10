@@ -18,7 +18,7 @@ CombatSolver supplies optional Oracle combat decisions; native-only slices remai
 - [Search settings, cross-character runs and visible-input pilot](docs/performance/PERFORMANCE_SEARCH_AND_VISIBLE_PILOT.md), [prior repairs and costs](docs/performance/PERFORMANCE_PILOT_REPAIRS_AND_COSTS.md), [initial pilot](docs/performance/PERFORMANCE_STRATEGY_PILOT_VALIDATION.md), [plan](docs/performance/PERFORMANCE_STRATEGY_PILOT_PLAN.md) and [information boundary](docs/architecture/STRATEGY_INFORMATION_BOUNDARY.md): 80 same-root searches and a completed Silent death/replay; two unsupported character paths and one Defect differential failure retained. Visible DTO controls passed; end-to-end player-visible isolation and all-character full runs remain unvalidated.
 - [Setup and validation](docs/validation/VALIDATION.md), [milestone history](docs/milestones/MILESTONE_STATUS.md), [provenance](docs/validation/PROBE_PROVENANCE.md).
 - [Implementation history](docs/history/M1_PROGRESS_HISTORY.md): the previous entry page and its per-stage evidence links; historical pending statements are not the latest status.
-- [M2 full-run Mod plan](docs/mods/MOD_FULL_RUN_EXECUTION_PLAN.md) and [phase prompts](docs/prompts/MOD_FULL_RUN_PHASE_PROMPTS.md): fixed role-Mod terminal compatibility first, then a pinned Workshop admission sample.
+- [M2 full-run Mod plan](docs/mods/MOD_FULL_RUN_EXECUTION_PLAN.md) and [phase prompts](docs/prompts/MOD_FULL_RUN_PHASE_PROMPTS.md): fixed role-Mod flow/content compatibility gates first, then a pinned Workshop admission sample. The boundary decisions are indexed in [docs/adr/README.md](docs/adr/README.md).
 
 ## Run locally
 

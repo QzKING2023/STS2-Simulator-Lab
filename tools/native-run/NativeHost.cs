@@ -23,6 +23,24 @@ internal static class NativeHost
     static string? patchStamp;
     internal static object? IsolationEvidence;
     static readonly Stopwatch Clock=Stopwatch.StartNew();
+    private static Action<Exception>? unobservedFaultHandler;
+    // Host-owned observations can retain a native room (and therefore Mod
+    // model instances) after the run has reached a boundary.  Release these
+    // references before a collectible Mod ALC is unloaded; this is a host
+    // lifecycle operation, not a write into Mod or game static state.
+    internal static void ReleaseForTeardown()
+    {
+        LastVictoriousRoom = null;
+        Observe = null;
+        Faults.Clear();
+        Seams.Clear();
+        if (unobservedFaultHandler is not null)
+        {
+            TaskHelper.UnobservedFault -= unobservedFaultHandler;
+            unobservedFaultHandler = null;
+        }
+    }
+    internal static bool TeardownReferencesCleared => LastVictoriousRoom is null && Observe is null;
     internal static void Install()
     {
         GameBootstrap.ApplyGodotBypasses();
@@ -49,7 +67,8 @@ internal static class NativeHost
         Patch(typeof(Godot.Time),"GetTicksUsec",nameof(TicksUsec));
         Patch(typeof(Godot.Time),"GetUnixTimeFromSystem",nameof(UnixTime));
         // Capture the original TaskHelper fault signal, before EventSynchronizer discards its faulted tasks.
-        TaskHelper.UnobservedFault += ex=>Faults.Add(ex);
+        unobservedFaultHandler = ex=>Faults.Add(ex);
+        TaskHelper.UnobservedFault += unobservedFaultHandler;
         var sentry=typeof(TaskHelper).Assembly.GetType("MegaCrit.Sts2.Core.Debug.SentryService",true)!;
         foreach(var method in sentry.GetMethods(BindingFlags.Static|BindingFlags.Public|BindingFlags.NonPublic).Where(m=>m.Name.StartsWith("Capture") && m.ReturnType==typeof(void)))
             PatchMethod(method,nameof(SkipTelemetry));

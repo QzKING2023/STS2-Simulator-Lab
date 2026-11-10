@@ -2,6 +2,22 @@
 
 Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all operations.
 
+## Session bootstrap
+
+Some Codex shells inject a dead proxy at `127.0.0.1:9`, which can make a valid GitHub token look invalid. Before the first `gh` or GitHub-backed `git` command in a new PowerShell session, dot-source the repository helper so the session inherits the user's working proxy and clears the injected SSH override:
+
+```powershell
+. .\tools\maintenance\Set-GitHubSession.ps1
+```
+
+Use `-Verify` before starting a ticket when diagnosing CLI access:
+
+```powershell
+. .\tools\maintenance\Set-GitHubSession.ps1 -Verify
+```
+
+The helper reads only user-level proxy variables, does not print tokens, and verifies the CLI account and repository permission. Add `-VerifyGit` when you also want to check `origin` with the configured HTTPS credential helper. Re-authenticate with `gh auth refresh -h github.com` only if the CLI check still fails after the local proxy is available.
+
 ## Conventions
 
 - **Create an issue**: `gh issue create --title "..." --body "..."`. Use a heredoc for multi-line bodies.

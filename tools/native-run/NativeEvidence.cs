@@ -22,6 +22,7 @@ internal static class NativeIdentity
         return id;
     }
     internal static object? Ref(object? value)=>value==null?null:new Dictionary<string,object>{{"$ref",Get(value)}};
+    internal static void ReleaseForTeardown()=>ids.Clear();
 }
 
 internal static class NativeEvidence

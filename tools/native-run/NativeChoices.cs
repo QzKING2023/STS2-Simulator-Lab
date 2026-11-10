@@ -41,6 +41,16 @@ internal sealed class NativeChoices : ICardSelector
     static readonly List<(string Id,CardModel Card)> pendingRewards=[];
     static readonly HashSet<string> Consumed=[];
     internal static Action<string,object?> Emit=NativeEvidence.Emit;
+    internal static void ReleaseForTeardown()
+    {
+        Transcript.Clear();
+        Planned.Clear();
+        pendingRewards.Clear();
+        Consumed.Clear();
+        RootChoiceCounts.Clear();
+        SolverProvider = null;
+        Current.Value = null;
+    }
     static JsonElement[] replay=[];static int replayIndex,requestNumber;
     internal static void LoadReplay(string path){replay=JsonDocument.Parse(File.ReadAllText(path)).RootElement.EnumerateArray().Where(x=>!NativeBranchSearch.Active||int.Parse(x.GetProperty("request").GetProperty("root").GetString()!.AsSpan(1))<=NativeBranchSearch.Plan!.PrefixCount).Select(x=>x.Clone()).ToArray();}
     internal static void AssertConsumed(){if(Planned.Count>0||replayIndex!=replay.Length||pendingRewards.Count>0)throw new NativeActionRejectedException("Unconsumed extra choice answers or unfinished reward");}

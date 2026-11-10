@@ -16,6 +16,8 @@ internal static class AssemblyResolver
         if(simple is "MyMod" or "CombatSolver" or "BaseLib" || simple.StartsWith("STS2-RitsuLib") ||
             simple is "MinionLib" or "shadowversebydmod")
         {
+            if (NativeFoundationModLoop.Enabled)
+                return NativeFoundationModLoop.Resolve(context, name);
             if (MinionNativeModLoop.Enabled)
                 return MinionNativeModLoop.Resolve(context, name);
             return NativeSolverProfile.Resolve(context,name);

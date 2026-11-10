@@ -27,6 +27,10 @@ internal static class NativePerformancePilot
     }
     internal static CharacterModel Select(string scenario)
     {
+        if (NativeFoundationModLoop.Enabled)
+            return Environment.GetEnvironmentVariable("SIMULATORLAB_FOUNDATION_USE_VANILLA_CHARACTER") == "1"
+                ? ModelDb.Get<Ironclad>()
+                : NativeFoundationModLoop.SelectedCharacter;
         if (WatcherNativeModLoop.Enabled)
         {
             var watcher = ModelDb.All.OfType<CharacterModel>().Where(c => c.GetType().Assembly.GetName().Name == "Watcher" && c.GetType().Name == "Watcher").ToArray();

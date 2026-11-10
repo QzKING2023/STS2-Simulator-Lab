@@ -10,12 +10,12 @@ internal sealed record NativeScenario(string Scenario,string ScenarioKind,string
     internal static NativeScenario Describe(string scenario,bool replay,string mode,string hostControl,string inputControl,bool branch=false)
     {
         if(mode is not ("off" or "minimal" or "detailed"))throw new ArgumentException("Unknown observation mode");
-        if(hostControl is not ("" or "async-fault" or "stale" or "budget" or "subchoice"))throw new ArgumentException("Unknown host control");
+        if(hostControl is not ("" or "async-fault" or "stale" or "budget" or "subchoice" or "strategy-stop" or "runtime-failure" or "environment-blocked" or "crash"))throw new ArgumentException("Unknown host control");
         if(inputControl is not ("" or "root-extra" or "unknown-choice-field" or "missing-choice-file" or "invalid-route"))throw new ArgumentException("Unknown input control");
         if(inputControl=="invalid-route"&&!replay)throw new ArgumentException("Invalid-route control requires explicit replay input");
-        var parts=scenario.Split(':');bool natural=scenario is "slice-skip" or "slice-take" or "natural-death" or "slice-solver-gate" or "slice-solver-loop";
+        var parts=scenario.Split(':');bool natural=scenario is "slice-skip" or "slice-take" or "slice-solver-gate" or "slice-solver-loop" || scenario.StartsWith("natural-death",StringComparison.Ordinal);
         natural|=NativeVisibleBattle.IsScenario(scenario)||NativePerformancePilot.IsScenario(scenario)||NativeSolverRun.IsScenario(scenario)||scenario=="rooms-natural"||scenario=="merchant-natural"||scenario=="solver-battle-natural";
-        natural|=scenario=="rewards-natural"||scenario=="merchant-natural-relic"||WatcherNativeModLoop.IsScenario(scenario)||KaguyaNativeModLoop.IsScenario(scenario)||MinionNativeModLoop.IsScenario(scenario);
+        natural|=scenario=="rewards-natural"||scenario=="merchant-natural-relic"||NativeFoundationModLoop.IsScenario(scenario)||WatcherNativeModLoop.IsScenario(scenario)||KaguyaNativeModLoop.IsScenario(scenario)||MinionNativeModLoop.IsScenario(scenario);
         bool fixture=NativeEventFixtures.Scenarios.Contains(scenario)||scenario=="solver-battle-death"||NativeSolverOnline.IsScenario(scenario)||Fixtures.Contains(scenario)||scenario is "tail-next-act" or "tail-architect"||NativeRooms.IsFixture(scenario);
         bool fault=scenario is "event-fault" or "sink" or "quota" or "softlock" or "tail-architect-prefix-fault" or "tail-architect-win-fault" or "natural-death-budget" or "natural-death-fault" || parts.Length==2&&Fixtures.Contains(parts[0])&&Faults.Contains(parts[1]);
         fixture|=NativeMerchantExpansion.Fixtures.Contains(scenario);fault|=NativeMerchantExpansion.Faults.Contains(scenario);

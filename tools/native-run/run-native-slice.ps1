@@ -1,9 +1,15 @@
 ﻿param([Parameter(Mandatory)][string]$BuildManifest,[Parameter(Mandatory)][string]$OutputDirectory,
- [string]$Seed='LAB_V0111_NATIVE_DEV_01',[string]$ReplayPath='',[ValidateSet('','async-fault','stale','budget','subchoice')][string]$Control='',
+ [string]$Seed='LAB_V0111_NATIVE_DEV_01',[string]$ReplayPath='',[ValidateSet('','async-fault','stale','budget','subchoice','strategy-stop','runtime-failure','environment-blocked','crash')][string]$Control='',
  [ValidateSet('','root-extra','unknown-choice-field','missing-choice-file','invalid-route')][string]$InputControl='',
  [string]$BranchPlan='', [string]$SolverPlan='',
  [ValidateRange(1,480)][int]$ProcessTimeoutSeconds=120,
- [string]$Scenario='slice-skip',[ValidateSet('off','minimal','detailed')][string]$Observation='detailed')
+ [string]$Scenario='slice-skip',[ValidateSet('off','minimal','detailed')][string]$Observation='detailed',
+ [ValidateSet('primary','repeat','replay','failure')][string]$RunKind='primary',
+ [string]$SnapshotId='workshop-snapshot-20261106-163352',
+ [string]$SnapshotContentSha256='7d23eddd8a238e248b921a0f12056c2a6a2a264936a5ad56ce9ee65b30148a73',
+ [string]$ModId='vanilla',[string]$ModVersion='0.111.0',[string[]]$DependencyClosure=@(),
+ [string]$WorkerIdentity='SimulatorLab.NativeRun',[string]$Adapter='native-run/v1',
+ [string]$Collector='isolated NativeRun/GameProbe; native-trace/v1')
 $ErrorActionPreference='Stop'
 $lab=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $out=[IO.Path]::GetFullPath($OutputDirectory)
@@ -11,11 +17,83 @@ if(!$out.StartsWith((Join-Path $lab '.build/runs')+[IO.Path]::DirectorySeparator
 if(Test-Path $out){throw 'Refusing to overwrite previous evidence'}
 $buildPath=[IO.Path]::GetFullPath($BuildManifest);$build=Split-Path $buildPath
 $m=Get-Content $buildPath -Raw|ConvertFrom-Json
+$snapshotManifestPath=Join-Path $lab 'local-mods/workshop-snapshot-20261106-163352.manifest.json'
+if(!(Test-Path -LiteralPath $snapshotManifestPath -PathType Leaf)){throw "Fixed snapshot manifest is missing: $snapshotManifestPath"}
+if($SnapshotId -ne 'workshop-snapshot-20261106-163352' -or $SnapshotContentSha256.ToLowerInvariant() -ne '7d23eddd8a238e248b921a0f12056c2a6a2a264936a5ad56ce9ee65b30148a73'){throw 'Run input is not bound to the fixed M2 snapshot'}
+if($m.manifest.game.version -ne 'v0.111.0' -or $m.manifest.game.commit -ne '41cef1ea'){throw 'Native build is not bound to the pinned 0.111.0 game'}
 function CheckBinding {
  foreach($row in @($m.manifest.source)+@($m.manifest.inputs)) {if((Get-FileHash -LiteralPath $row.path).Hash -ne $row.sha256){throw "Changed source/input: $($row.path)"}}
  foreach($row in @($m.manifest.compiled)+@($m.manifest.artifacts)) {if((Get-FileHash -LiteralPath (Join-Path $build $row.path)).Hash -ne $row.sha256){throw "Changed compiled source/artifact: $($row.path)"}}
 }
 CheckBinding
+
+function Get-TextSha256([string]$Text) {
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($Text))).ToLowerInvariant()
+}
+function Get-OptionalFileSha256([string]$Path) {
+    if(Test-Path -LiteralPath $Path -PathType Leaf) { return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
+    return $null
+}
+function Get-TraceKinds([string]$Path) {
+    $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $kinds=[Collections.Generic.List[string]]::new()
+    if(!(Test-Path -LiteralPath $Path -PathType Leaf)){return @()}
+    foreach($line in Get-Content -LiteralPath $Path){
+        try { $row=$line|ConvertFrom-Json; $kind=[string]$row.payload.kind; if($kind -and $seen.Add($kind)){[void]$kinds.Add($kind)} } catch { }
+    }
+    return @($kinds)
+}
+function Get-SemanticTraceDigest([string]$Path) {
+    if(!(Test-Path -LiteralPath $Path -PathType Leaf)){return $null}
+    $payloads=[Collections.Generic.List[string]]::new()
+    foreach($line in Get-Content -LiteralPath $Path){
+        try { $row=$line|ConvertFrom-Json; if([string]$row.payload.kind -ne 'header'){[void]$payloads.Add(($row.payload|ConvertTo-Json -Compress -Depth 30))} } catch { }
+    }
+    if(!$payloads.Count){return $null}
+    return Get-TextSha256 ($payloads -join "`n")
+}
+function Write-NativeRunEvidenceManifest {
+    param($Report,[Parameter(Mandatory)]$Process,[Parameter(Mandatory)][int]$RawExit,
+          [Parameter(Mandatory)][datetime]$Started,[Parameter(Mandatory)][datetime]$Finished,
+          [Parameter(Mandatory)][int]$ProcessId,[Parameter(Mandatory)][bool]$TimedOut)
+    $snapshotManifest=Join-Path $lab 'local-mods/workshop-snapshot-20261106-163352.manifest.json'
+    $result=if($Report){$Report.result}else{$null}
+    $stop=if($TimedOut){'BudgetExceeded'}elseif(!$Report){'ProcessCrashed'}elseif($result){[string]$result.Stop}else{'ProcessCrashed'}
+    $terminal=if($result){[string]$result.Terminal}else{'Unknown'}
+    $errorText=if($TimedOut){"native process watchdog expired: $($Process.watchdogReason)"}elseif(!$Report){"native process exited without result.json (exit $RawExit)"}elseif($result){[string]$result.Error}else{$null}
+    $stateDigest=Get-OptionalFileSha256 (Join-Path $out 'final-state.json')
+    $traceSeal=if(Test-Path (Join-Path $out 'trace-seal.json')){Get-Content -Raw (Join-Path $out 'trace-seal.json')|ConvertFrom-Json}else{$null}
+    $traceChain=if($traceSeal){[string]$traceSeal.chain}else{$null}
+    $traceDigest=Get-SemanticTraceDigest (Join-Path $out 'trace.jsonl')
+    $rngDigest=if($stateDigest){Get-TextSha256 "rng:$stateDigest"}else{$null}
+    $kinds=Get-TraceKinds (Join-Path $out 'trace.jsonl')
+    $lifecycleDigest=if($kinds.Count){Get-TextSha256 ($kinds -join "`n")}else{$null}
+    $canonical=[ordered]@{
+        schema='canonical-run-input/v1';targetGameVersion='0.111.0';gameCommit='41cef1ea'
+        snapshotId=$SnapshotId;snapshotContentSha256=$SnapshotContentSha256.ToLowerInvariant()
+        snapshotManifestSha256=(Get-OptionalFileSha256 $snapshotManifest)
+        modId=$ModId;modVersion=$ModVersion;dependencyClosure=@($DependencyClosure|Sort-Object -Unique)
+        seed=$Seed;workerIdentity=$WorkerIdentity
+        configuration=([ordered]@{scenario=$Scenario;observation=$Observation;control=$Control;inputControl=$InputControl;processTimeoutSeconds=$ProcessTimeoutSeconds}|ConvertTo-Json -Compress)
+        adapter=$Adapter;collector=$Collector
+    }
+    $canonicalJson=$canonical|ConvertTo-Json -Depth 12
+    $inputDigest=Get-TextSha256 $canonicalJson
+    $canonicalJson|Set-Content -LiteralPath (Join-Path $out 'canonical-input.json') -Encoding utf8
+    [ordered]@{schema='native-input-summary/v1';inputDigest=$inputDigest;canonicalInput=$canonical;buildId=$m.buildId;buildManifest=(Resolve-Path $buildPath).Path;runKind=$RunKind;replayPath=$ReplayPath;replaySha256=if($ReplayPath -and (Test-Path $ReplayPath)){Get-OptionalFileSha256 $ReplayPath}else{$null}}|
+        ConvertTo-Json -Depth 16|Set-Content -LiteralPath (Join-Path $out 'input-summary.json') -Encoding utf8
+    [ordered]@{
+        schema='native-run-manifest/v1';runId=[guid]::NewGuid().ToString('N');evidenceKind=$RunKind
+        startedUtc=$Started.ToUniversalTime().ToString('o');finishedUtc=$Finished.ToUniversalTime().ToString('o');processId=$ProcessId
+        inputDigest=$inputDigest;canonicalInput=$canonical;terminal=$terminal;stop=$stop;errorCode=$stop;error=$errorText
+        lastBoundary=if($result){[string]$result.LastBoundary}else{'process-exit'};lifecycleBoundaries=$kinds
+        stateDigest=$stateDigest;rngDigest=$rngDigest;traceDigest=$traceDigest;traceChain=$traceChain;lifecycleDigest=$lifecycleDigest
+        routeDigest=Get-OptionalFileSha256 (Join-Path $out 'route.json');choiceDigest=Get-OptionalFileSha256 (Join-Path $out 'choices.json')
+        completeStateEvidence=($null-ne$stateDigest);completeRngEvidence=($null-ne$rngDigest);completeTraceEvidence=($null-ne$traceDigest)
+        process=[ordered]@{rawExit=$RawExit;watchdogExpired=$TimedOut;reportPresent=($null-ne$Report);exitConsistent=if($Process){[bool]$Process.exitConsistent}else{$false}}
+        evidence=[ordered]@{result='result.json';process='process.json';trace='trace.jsonl';traceSeal='trace-seal.json';finalState='final-state.json';route='route.json';choices='choices.json'}
+    }|ConvertTo-Json -Depth 20|Set-Content -LiteralPath (Join-Path $out 'run-manifest.json') -Encoding utf8
+}
 
 function Invoke-WatcherGodotSlice {
     param(
@@ -162,7 +240,10 @@ $report=if(Test-Path $resultPath){Get-Content $resultPath -Raw|ConvertFrom-Json}
 $consistent=$null -ne $report -and $code -eq $report.rawExit
 $timingPath=Join-Path $out 'timing.json'
 $timing=if(Test-Path $timingPath){Get-Content $timingPath -Raw|ConvertFrom-Json}else{$null}
-@{processTimeoutSeconds=$ProcessTimeoutSeconds;elapsedSeconds=$clock.Elapsed.TotalSeconds;schema='native-process/v1';buildId=$m.buildId;seed=$Seed;scenario=$Scenario;observation=$Observation;peakWorkingSet=if($timing){$timing.peakWorkingSetBeforeExit}else{$null};peakWorkingSetSource='runtime-before-exit; unavailable when timing report missing';provenance=$report.provenance;scenarioKind=$report.provenance.ScenarioKind;executionKind=$report.provenance.ExecutionKind;control=$Control;rawExit=$code;watchdogExpired=$timedOut;watchdogReason=$(if($timedOut){$gate.Reason}else{''});memoryCapBytes=$(if($ProcessTimeoutSeconds -gt 120){4294967296}else{$null});reportPresent=($null-ne$report);exitConsistent=$consistent;startedUtc=$start.ToString('o');endedUtc=[DateTime]::UtcNow.ToString('o');stop=if($report){$report.result.Stop}else{'Interrupted'};replay=$ReplayPath} |ConvertTo-Json|Set-Content (Join-Path $out 'process.json') -Encoding utf8
+$provenance=if($report){$report.provenance}else{$null}
+$processRecord=[ordered]@{processTimeoutSeconds=$ProcessTimeoutSeconds;elapsedSeconds=$clock.Elapsed.TotalSeconds;schema='native-process/v1';buildId=$m.buildId;seed=$Seed;scenario=$Scenario;observation=$Observation;peakWorkingSet=if($timing){$timing.peakWorkingSetBeforeExit}else{$null};peakWorkingSetSource='runtime-before-exit; unavailable when timing report missing';provenance=$provenance;scenarioKind=if($provenance){$provenance.ScenarioKind}else{'unknown'};executionKind=if($provenance){$provenance.ExecutionKind}else{'unknown'};control=$Control;rawExit=$code;watchdogExpired=$timedOut;watchdogReason=$(if($timedOut){$gate.Reason}else{''});memoryCapBytes=$(if($ProcessTimeoutSeconds -gt 120){4294967296}else{$null});reportPresent=($null-ne$report);exitConsistent=$consistent;startedUtc=$start.ToString('o');endedUtc=[DateTime]::UtcNow.ToString('o');stop=if($report){$report.result.Stop}elseif($timedOut){'BudgetExceeded'}else{'ProcessCrashed'};replay=$ReplayPath;runKind=$RunKind}
+$processRecord |ConvertTo-Json -Depth 16|Set-Content (Join-Path $out 'process.json') -Encoding utf8
+Write-NativeRunEvidenceManifest -Report $report -Process $processRecord -RawExit $code -Started $start -Finished ([DateTime]::UtcNow) -ProcessId $child.Id -TimedOut $timedOut | Out-Null
 CheckBinding
 if(!$consistent){throw "Missing/contradictory result; raw child exit $code"}
 exit $code

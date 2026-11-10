@@ -41,6 +41,16 @@ internal static partial class Program
     static NativeRunTerminal terminal=NativeRunTerminal.Unknown;
     static string Id(object o)=>NativeIdentity.Get(o);
     internal static string StateStamp()=>Hash(State().GetRawText());
+    private static RunState CreateRunAndWriteProfile(string seed)
+    {
+        var unlock = SaveManager.Instance.GenerateUnlockStateFromProgress();
+        Write("profile.json",new{id="vanilla-all-epochs-zero-runs/v1",unlock=unlock.ToSerializable(),progress=SaveManager.Instance.Progress.ToSerializable()});
+        NativeEvidence.Emit("profile-lock",new{sha256=Hash(File.ReadAllText(Path.Combine(output,"profile.json")))});
+        var character = NativePerformancePilot.Select(scenario);
+        var player = Player.CreateForNewRun(character, unlock, 1uL);
+        var acts = ActModel.GetDefaultList().Select(a => a.ToMutable()).ToList();
+        return RunState.CreateForNewRun([player], acts, [], GameMode.Standard, 0, seed);
+    }
     static string scenario="slice-skip";
     static NativeScenario provenance=null!;
     static IDisposable? selectorScope;
@@ -48,6 +58,56 @@ internal static partial class Program
     internal static bool InThirdAct=>run?.CurrentActIndex==2;
     internal static bool InSecondAct=>run?.CurrentActIndex>0;
     internal static IReadOnlyList<object> WatcherEvents => Events.ToArray();
+    internal static void ReleaseForTeardown()
+    {
+        ActionExecutor? actionExecutor = null;
+        {
+            // RunManager.CleanUp resets ActionQueueSet, which raises
+            // ActionQueueChanged.  A newly-created run starts with its
+            // ActionExecutor paused, so that reset would otherwise leave an
+            // ExecuteActions task parked forever in WaitForUnpause and keep
+            // the run's Player graph (including collectible mod types) alive.
+            try
+            {
+                actionExecutor = RunManager.Instance.ActionExecutor;
+                actionExecutor?.Unpause();
+                actionExecutor?.Cancel();
+            }
+            catch { }
+            try { RunManager.Instance.CleanUp(graceful: false); } catch { }
+            // CleanUp resets ActionQueueSet and raises ActionQueueChanged,
+            // which can start a fresh executor task after the first cancel.
+            // Stop that post-reset task as well before releasing the graph.
+            try { actionExecutor?.Unpause(); actionExecutor?.Cancel(); } catch { }
+            try
+            {
+                var task = actionExecutor?.FinishedExecutingActions();
+                if (task is { IsCompleted: false }) task.Wait(TimeSpan.FromSeconds(2));
+            }
+            catch { }
+            try { actionExecutor?.Cancel(); } catch { }
+            try { NativeFoundationModLoop.ReleaseRunGraphForTeardown(); } catch { }
+        }
+        SynchronizationContext.SetSynchronizationContext(null);
+        if (NativeFoundationModLoop.Enabled)
+        {
+            try { NativeFoundationModLoop.ReleasePlayerForTeardown(player); } catch { }
+        }
+        run = null;
+        player = null;
+        try { loop?.ReleaseForTeardown(); } catch { }
+        loop = null!;
+        // The foundation model augmenter is a host-owned delegate. It does
+        // not belong in the post-run state graph once ModelDb has been reset.
+        GameBootstrap.ModelTypeAugmenter = null;
+        Ids.Clear();
+        Events.Clear();
+        Route.Clear();
+        NativeIdentity.ReleaseForTeardown();
+        NativeChoices.ReleaseForTeardown();
+        NativeLifecycle.ReleaseForTeardown();
+        NativeHost.ReleaseForTeardown();
+    }
     static object CardState(CardModel c)=>NativeNaturalBoss.CardRecords?(object)new{id=Id(c),model=c.Id.ToString(),upgrade=c.CurrentUpgradeLevel,deck=c.DeckVersion==null?null:Id(c.DeckVersion),native=c.ToSerializable()}:new{id=Id(c),model=c.Id.ToString(),upgrade=c.CurrentUpgradeLevel,deck=c.DeckVersion==null?null:Id(c.DeckVersion)};
     internal static object PermanentCardState(CardModel c)=>(NativeMerchantEconomy.Active||NativeRewardClosure.Active||NativeNaturalBoss.CardRecords)?(object)new{id=Id(c),model=c.Id.ToString(),upgrade=c.CurrentUpgradeLevel,native=c.ToSerializable()}:new{id=Id(c),model=c.Id.ToString(),upgrade=c.CurrentUpgradeLevel};
     static object EnemyState(Creature e)=>NativeMajor.Active?(object)new{id=Id(e),hp=e.CurrentHp,block=e.Block,model=e.Monster?.Id.ToString(),alive=e.IsAlive,primary=e.IsPrimaryEnemy,powers=e.Powers.Select(p=>new{id=Id(p),model=p.Id.ToString(),amount=p.Amount}).ToArray()}:new{id=Id(e),hp=e.CurrentHp,block=e.Block,model=e.Monster?.Id.ToString(),powers=e.Powers.Select(p=>new{id=Id(p),model=p.Id.ToString(),amount=p.Amount}).ToArray()};
@@ -77,8 +137,9 @@ internal static partial class Program
     },Json);
         if(!NativeLifecycle.Active)return state;
         var node=System.Text.Json.Nodes.JsonNode.Parse(state.GetRawText())!.AsObject();
-        var ev=run?.CurrentRoom is EventRoom?RunManager.Instance.EventSynchronizer.Events.FirstOrDefault(e=>ReferenceEquals(e.Owner,player)):null;
-        node["lifecycle"]=JsonSerializer.SerializeToNode(new{native=NativeLifecycle.Snapshot(),mapGeneration=run==null?0:RunManager.Instance.MapSelectionSynchronizer.MapGenerationCount,eventModel=ev==null?null:new{reference=NativeIdentity.Ref(ev),model=ev.Id.ToString(),rng=ev.Rng.ToSerializable(),ev.IsFinished}},Json);
+        var eventSynchronizer = run is null ? null : RunManager.Instance.EventSynchronizer;
+        var ev=run?.CurrentRoom is EventRoom ? eventSynchronizer?.Events.FirstOrDefault(e=>ReferenceEquals(e.Owner,player)) : null;
+        node["lifecycle"]=JsonSerializer.SerializeToNode(new{native=NativeLifecycle.Snapshot(),mapGeneration=run is null ? 0 : RunManager.Instance.MapSelectionSynchronizer?.MapGenerationCount ?? 0,eventModel=ev==null?null:new{reference=NativeIdentity.Ref(ev),model=ev.Id.ToString(),rng=ev.Rng.ToSerializable(),ev.IsFinished}},Json);
         if(NativeRooms.Active||NativeRepeatTreasure.Active)node["rooms"]=JsonSerializer.SerializeToNode(RoomSnapshot(),Json);
         if(NativeMerchant.Active)node["merchant"]=JsonSerializer.SerializeToNode(NativeMerchant.Snapshot(),Json);
         if(NativeMerchantEconomy.Active||NativeRewardClosure.Active)node["mapHistory"]=JsonSerializer.SerializeToNode(NativeMerchantEconomy.History(run),Json);
@@ -112,6 +173,7 @@ internal static partial class Program
         replayIndex++; Route.Add(entry);Write("route.json",Route);Write("choices.json",NativeChoices.Transcript);Observe("confirmed",entry);BranchAfterConfirm(kind);
     }
     static readonly List<object> Route=[];
+    static int completedNaturalBattles;
     static void Await(Task task,string name){using var timing=NativeTiming.Measure("native-await-and-pump");loop.RunUntilCompleted(task,NativeRooms.Active?RoomWaitBudget():TimeSpan.FromSeconds(45),name);}
     static void Ready()
     {
@@ -122,11 +184,12 @@ internal static partial class Program
             if(player!.Creature.CurrentHp<=0)throw new InvalidOperationException("Player died before requested Play boundary");
             if(DateTime.UtcNow>end)throw new TimeoutException("Playable combat boundary");loop.Pump(TimeSpan.FromMilliseconds(10));}
     }
-    static void Travel()
+    static void Travel(bool preferCombat=false)
     {
         if(!MegaCrit.Sts2.Core.Hooks.Hook.ShouldProceedToNextMapPoint(run!)) throw new NotSupportedException("Native Hook forbids map travel");
         var current=run!.CurrentMapPoint!;
         var choices=current.Children.OrderBy(p=>p.coord.col).ThenBy(p=>p.coord.row).ToArray();
+        if(preferCombat){var combat=choices.Where(p=>p.PointType is MegaCrit.Sts2.Core.Map.MapPointType.Monster or MegaCrit.Sts2.Core.Map.MapPointType.Elite or MegaCrit.Sts2.Core.Map.MapPointType.Boss).ToArray();if(combat.Length>0)choices=combat;}
         if(choices.Length==0)throw new NotSupportedException("No child node in slice");
         var next=choices[PolicyIndex("Travel",choices.Select(x=>(object)new{from=current.coord.ToString(),to=x.coord.ToString()}).ToArray())];
         Observe("map-candidates",choices.Select(p=>new{node=p.coord.ToString(),type=p.PointType.ToString()}).ToArray());
@@ -179,7 +242,7 @@ internal static partial class Program
             if(NativeMajor.Active&&c.Enemies.Any(x=>x.Monster?.IntendsToAttack==true)&&player!.Creature.Block<10)candidates=candidates.OrderByDescending(x=>x.card.Id.ToString()=="CARD.DEFEND_IRONCLAD").ToArray();
             if(NativePreparation.Active)candidates=PreparedCandidates(candidates);
             Observe("combat-candidates",candidates.Select(x=>new{card=Id(x.card),model=x.card.Id.ToString(),target=x.target==null?null:Id(x.target)}).ToArray());
-            bool deathPolicy=scenario.StartsWith("natural-death");
+            bool deathPolicy=scenario.StartsWith("natural-death") && !(scenario=="natural-death-after-reward" && completedNaturalBattles==0);
             bool frozenEndTurn=branchNext?.Action.GetProperty("kind").GetString()=="EndTurn"||replayPath!=null&&replayIndex<replay.Length&&replay[replayIndex].GetProperty("action").GetProperty("kind").GetString()=="EndTurn";
             if(candidates.Length>0&&!deathPolicy&&!frozenEndTurn){var choice=candidates[PolicyIndex("PlayCard",candidates.Select(x=>(object)new{card=Id(x.card),model=x.card.Id.ToString(),target=x.target==null?null:Id(x.target)}).ToArray())];
                 Action("PlayCard",new{card=Id(choice.card),model=choice.card.Id.ToString(),target=choice.target==null?null:Id(choice.target)},()=>{
@@ -203,6 +266,7 @@ internal static partial class Program
             if(!NativeLifecycle.Active&&player.Creature.CurrentHp<=0){terminal=NativeRunTerminal.Death;Observe("death");return;}
         }
         if(NativeHost.BattleVictories-victoriesBefore!=1)throw new InvalidOperationException("Combat stopped without actual native Victory callback");
+        completedNaturalBattles++;
         Observe("battle-victory-cleanup",new{historyEntries=CombatManager.Instance.History.Entries.Count()});
     }
     static void Rewards()
@@ -300,7 +364,7 @@ internal static partial class Program
             if(replayPath!=null){replay=JsonDocument.Parse(File.ReadAllText(replayPath)).RootElement.EnumerateArray().Select(e=>e.Clone()).ToArray();if(NativeSolverCoordinator.Active&&!scenario.EndsWith("-replay")){if(replay.Length!=NativeSolverCoordinator.Configuration!.PrefixCount)throw new NativeActionRejectedException("Coordinator requires exact complete prefix route");}if(NativeBranchSearch.Active){if(replay.Length<NativeBranchSearch.Plan!.PrefixCount)throw new NativeActionRejectedException("Short branch prefix");replay=replay.Take(NativeBranchSearch.Plan.PrefixCount).ToArray();}}
             AssemblyResolver.VerifyGame();
             loop=new();SynchronizationContext.SetSynchronizationContext(loop);
-            using(NativeTiming.Measure("host-initialization")){NativeHost.Install();if(WatcherNativeModLoop.Enabled)GameBootstrap.ModelTypeAugmenter=WatcherNativeModLoop.IncludeModels;else if(KaguyaNativeModLoop.Enabled)GameBootstrap.ModelTypeAugmenter=KaguyaNativeModLoop.IncludeModels;else if(MinionNativeModLoop.Enabled)GameBootstrap.ModelTypeAugmenter=MinionNativeModLoop.IncludeModels;GameBootstrap.InitializeStaticState();if(WatcherNativeModLoop.Enabled){WatcherNativeModLoop.Initialize();Console.WriteLine("[watcher] finishing ModelDb");Console.Out.Flush();GameBootstrap.FinishModelDb();Console.WriteLine("[watcher] ModelDb finished");Console.Out.Flush();}else if(KaguyaNativeModLoop.Enabled){KaguyaNativeModLoop.Initialize();Console.WriteLine("[kaguya] finishing ModelDb");Console.Out.Flush();GameBootstrap.FinishModelDb();Console.WriteLine("[kaguya] ModelDb finished");Console.Out.Flush();}else if(MinionNativeModLoop.Enabled){MinionNativeModLoop.Initialize();Console.WriteLine("[minion] finishing ModelDb");Console.Out.Flush();GameBootstrap.FinishModelDb();Console.WriteLine("[minion] ModelDb finished");Console.Out.Flush();}NativeSolverProfile.Initialize(output);NativeHost.Ensure();}
+            using(NativeTiming.Measure("host-initialization")){NativeHost.Install();if(NativeFoundationModLoop.Enabled)GameBootstrap.ModelTypeAugmenter=NativeFoundationModLoop.IncludeModels;else if(WatcherNativeModLoop.Enabled)GameBootstrap.ModelTypeAugmenter=WatcherNativeModLoop.IncludeModels;else if(KaguyaNativeModLoop.Enabled)GameBootstrap.ModelTypeAugmenter=KaguyaNativeModLoop.IncludeModels;else if(MinionNativeModLoop.Enabled)GameBootstrap.ModelTypeAugmenter=MinionNativeModLoop.IncludeModels;GameBootstrap.InitializeStaticState();if(NativeFoundationModLoop.Enabled){NativeFoundationModLoop.Initialize();Console.WriteLine("[foundation] finishing ModelDb");Console.Out.Flush();GameBootstrap.FinishModelDb();Console.WriteLine("[foundation] ModelDb finished");Console.Out.Flush();}else if(WatcherNativeModLoop.Enabled){WatcherNativeModLoop.Initialize();Console.WriteLine("[watcher] finishing ModelDb");Console.Out.Flush();GameBootstrap.FinishModelDb();Console.WriteLine("[watcher] ModelDb finished");Console.Out.Flush();}else if(KaguyaNativeModLoop.Enabled){KaguyaNativeModLoop.Initialize();Console.WriteLine("[kaguya] finishing ModelDb");Console.Out.Flush();GameBootstrap.FinishModelDb();Console.WriteLine("[kaguya] ModelDb finished");Console.Out.Flush();}else if(MinionNativeModLoop.Enabled){MinionNativeModLoop.Initialize();Console.WriteLine("[minion] finishing ModelDb");Console.Out.Flush();GameBootstrap.FinishModelDb();Console.WriteLine("[minion] ModelDb finished");Console.Out.Flush();}NativeSolverProfile.Initialize(output);NativeHost.Ensure();}
             NativeHost.Observe=kind=>Observe(kind);
             selectorScope=CardSelectCmd.UseSelector(NativeChoices.Instance);
             if(replayPath!=null){var cp=Path.Combine(Path.GetDirectoryName(replayPath)!,"choices.json");if(!File.Exists(cp))throw new NativeActionRejectedException("Missing frozen choice transcript");NativeChoices.LoadReplay(cp);NativeChoices.Replaying=true;
@@ -313,6 +377,10 @@ internal static partial class Program
                 throw new InvalidOperationException("Fault gate failed open");
             }
             if(control=="budget")throw new TimeoutException("labelled budget control");
+            if(control=="strategy-stop")throw new NativeStrategyStoppedException("labelled strategy stop control");
+            if(control=="runtime-failure")throw new NativeRuntimeFailureException("labelled runtime failure control");
+            if(control=="environment-blocked")throw new NativeEnvironmentBlockedException("labelled environment blocked control");
+            if(control=="crash")Environment.FailFast("labelled process crash control");
             if(control=="subchoice"){
                 var method=typeof(CardSelectCmd).GetMethods().First(m=>m.Name=="FromSimpleGridForRewards");
                 try{method.Invoke(null,method.GetParameters().Select(p=>p.HasDefaultValue?p.DefaultValue:null).ToArray());}
@@ -323,20 +391,20 @@ internal static partial class Program
             foreach(string epoch in EpochModel.AllEpochIds)SaveManager.Instance.Progress.ObtainEpochOverride(epoch,EpochState.Revealed);
             foreach(var epoch in SaveManager.Instance.Progress.Epochs)epoch.ObtainDate=0;
             AccessTools.PropertySetter(typeof(ProgressState),nameof(ProgressState.UniqueId))!.Invoke(SaveManager.Instance.Progress,["SIMULATORLAB_NATIVE_PROFILE_1"]);
-            var unlock=SaveManager.Instance.GenerateUnlockStateFromProgress();
-            Write("profile.json",new{id="vanilla-all-epochs-zero-runs/v1",unlock=unlock.ToSerializable(),progress=SaveManager.Instance.Progress.ToSerializable()});
-            NativeEvidence.Emit("profile-lock",new{sha256=Hash(File.ReadAllText(Path.Combine(output,"profile.json")))});
-            run=RunState.CreateForNewRun([Player.CreateForNewRun(NativePerformancePilot.Select(scenario),unlock,1uL)],ActModel.GetDefaultList().Select(a=>a.ToMutable()).ToList(),[],GameMode.Standard,0,seed);
+            run=CreateRunAndWriteProfile(seed);
             player=run.Players.Single();
             var manager=RunManager.Instance;
-            manager.SetUpNewSingleplayer(run,shouldSave:false);Await(manager.FinalizeStartingRelics(),"Starting relics");manager.Launch();terminal=NativeRunTerminal.Ongoing;
+            manager.SetUpNewSingleplayer(run,shouldSave:false);
+            Await(manager.FinalizeStartingRelics(),"Starting relics");
+            manager.Launch();terminal=NativeRunTerminal.Ongoing;
             Observe("new-run",new{seed,mode="Standard",character=player.Character.Id.ToString(),prediction="NotCompared",policy=NativePreparation.Active?NativePreparation.Policy:NativeMajor.Active?"oracle-current-intent/defend10/attackfirst/v2":NativeEventFlow.Active&&!NativeEventFlow.Natural?"visible-attackfirst/reward-firstattack/v1":NativeMerchantExpansion.Natural?"visible-nearest-shop/cheapest-supported-relic/v1":NativeMerchantEconomy.Natural?"visible-nearest-shop/cheapest-card/v1":scenario.StartsWith("natural-death")?"native-end-turn-only/v1":"native-first-legal/v1"});
             CoordinatorAtNewRun();
             if(NativeRewardProbe.Active){previousRewardSelector=RewardsSet.testSelector;RewardsSet.testSelector=NativeRewards.Collect;rewardSelectorInstalled=true;}
             Action("EnterAct",new{act=0},()=>Await(manager.EnterAct(0,false),"Natural first act"));
             Opening();
             if(control=="stale")new NativeDecisionTicket(run,sequence,"before","Travel").Consume(run,sequence+1,"before","Travel");
-            if(WatcherNativeModLoop.IsScenario(scenario)){Travel();Ready();Battle();if(terminal==NativeRunTerminal.Death)stop=NativeRunStop.Completed;else{Rewards();Travel();Ready();stop=NativeRunStop.SliceBoundary;}}
+            if(NativeFoundationModLoop.IsScenario(scenario)){Travel();Ready();Battle();if(terminal==NativeRunTerminal.Death)stop=NativeRunStop.Completed;else{Rewards();Travel(preferCombat:true);Ready();Observe("foundation-cross-room-boundary");stop=NativeRunStop.SliceBoundary;}}
+            else if(WatcherNativeModLoop.IsScenario(scenario)){Travel();Ready();Battle();if(terminal==NativeRunTerminal.Death)stop=NativeRunStop.Completed;else{Rewards();Travel();Ready();stop=NativeRunStop.SliceBoundary;}}
             else if(KaguyaNativeModLoop.IsScenario(scenario)){KaguyaEventProbe();stop=NativeRunStop.SliceBoundary;}
             else if(MinionNativeModLoop.IsScenario(scenario)){
                 if(MinionNativeModLoop.IsRealCombatScenario(scenario)){
@@ -365,6 +433,11 @@ internal static partial class Program
             else if(NativeRewardProbe.Active){RewardsProbe();stop=terminal==NativeRunTerminal.Death?NativeRunStop.Completed:NativeRunStop.SliceBoundary;}
             else if(NativeRooms.Active){RoomsProbe();stop=terminal==NativeRunTerminal.Death?NativeRunStop.Completed:NativeRunStop.SliceBoundary;}
             else if(scenario.StartsWith("tail-")){TailProbe();stop=terminal==NativeRunTerminal.RunVictory?NativeRunStop.Completed:NativeRunStop.SliceBoundary;}
+            else if(scenario=="natural-death-after-reward"){
+                Travel();Battle();
+                if(terminal==NativeRunTerminal.Death)stop=NativeRunStop.Completed;
+                else { Rewards();Travel(preferCombat:true);Battle();if(terminal!=NativeRunTerminal.Death)throw new InvalidOperationException("Reward-to-death coordinator did not reach actual death");stop=NativeRunStop.Completed; }
+            }
             else if(scenario.StartsWith("natural-death")){Travel();Battle();if(terminal!=NativeRunTerminal.Death)throw new InvalidOperationException("End-turn policy did not reach actual death");stop=NativeRunStop.Completed;}
             else if(!scenario.StartsWith("slice-")&&scenario!="event-fault"){
                 if(scenario.StartsWith("deck-"))Fixture();else{Travel();Ready();Fixture();}
@@ -382,6 +455,9 @@ internal static partial class Program
         catch(NativeActionRejectedException ex){stop=NativeRunStop.InvalidAction;error=ex.ToString();}
         catch(JsonException ex){stop=NativeRunStop.InvalidAction;error=ex.ToString();}
         catch(TimeoutException ex){stop=NativeRunStop.BudgetExceeded;error=ex.ToString();}
+        catch(NativeStrategyStoppedException ex){stop=NativeRunStop.StrategyStopped;error=ex.ToString();}
+        catch(NativeEnvironmentBlockedException ex){stop=NativeRunStop.EnvironmentBlocked;error=ex.ToString();}
+        catch(NativeRuntimeFailureException ex){stop=NativeRunStop.RuntimeFailure;error=ex.ToString();}
         catch(Exception ex){stop=NativeRunStop.EngineError;error=ex.ToString();}
         selectorScope?.Dispose();
         if(rewardSelectorInstalled){RewardsSet.testSelector=previousRewardSelector;Write("reward-choices.json",NativeRewards.Transcript);}
@@ -398,6 +474,7 @@ internal static partial class Program
         if(WatcherNativeModLoop.Enabled)WatcherNativeModLoop.WriteProbe(output,seed,replayPath!=null,terminal,stop,error);
         if(KaguyaNativeModLoop.Enabled)KaguyaNativeModLoop.WriteProbe(output,seed,replayPath!=null,terminal,stop,error);
         if(MinionNativeModLoop.Enabled)MinionNativeModLoop.WriteProbe(output,seed,replayPath!=null||scenario.EndsWith("-replay",StringComparison.Ordinal),terminal,stop,error);
+        if(NativeFoundationModLoop.Enabled){NativeFoundationModLoop.WriteProbe(output,seed,replayPath!=null||scenario.EndsWith("-replay",StringComparison.Ordinal),terminal,stop,error);NativeFoundationModLoop.FinalizeTeardownAfterProbe(output);}
         if(dispatched>confirmed && error!=null)terminal=NativeRunTerminal.Unknown;
         var result=new NativeRunResultV1{Terminal=terminal,Stop=stop,Dispatched=dispatched,Confirmed=confirmed,DataComplete=error==null,LastBoundary=last,Error=error};
         Write("result.json",new{result,validation=result.Validate(),rawExit=result.ExitCode,scope=scenario,provenance,trace=seal,choicesSubmitted=NativeChoices.Submitted,guards=new{NativeHost.ProgressWrites,NativeHost.ReplayWrites,NativeHost.TelemetryCalls,faults=NativeHost.Faults.Select(e=>e.ToString()).ToArray(),isolation=NativeHost.IsolationEvidence},seams=NativeHost.Seams,bootstrap=GameBootstrap.Bypasses,loadedAssemblies=AppDomain.CurrentDomain.GetAssemblies().Select(a=>a.GetName().Name).Order().ToArray()});

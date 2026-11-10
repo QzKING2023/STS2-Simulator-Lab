@@ -13,7 +13,12 @@ using MegaCrit.Sts2.Core.Runs;
 namespace OfflineSearchHarness;
 internal static partial class Program
 {
-    static object? EventRng()=>run==null?null:(AccessTools.Field(RunManager.Instance.EventSynchronizer.GetType(),"_multiplayerOptionSelectionRng").GetValue(RunManager.Instance.EventSynchronizer) as Rng)?.ToSerializable();
+    static object? EventRng()
+    {
+        var synchronizer = run is null ? null : RunManager.Instance.EventSynchronizer;
+        if (synchronizer is null) return null;
+        return (AccessTools.Field(synchronizer.GetType(), "_multiplayerOptionSelectionRng")?.GetValue(synchronizer) as Rng)?.ToSerializable();
+    }
     static void Plan(params int[] indices){if(!NativeChoices.Replaying)NativeChoices.Planned.Enqueue(indices);}
     static CardSelectorPrefs Prefs(int min=1,int? max=null,bool manual=false)=>new(new LocString("gameplay_ui","LAB_FIXTURE"),min,max??min){RequireManualConfirmation=manual};
     static void Contract(bool valid,string name,object? detail=null){Observe("fixture-assertion",new{name,valid,detail});if(!valid)throw new InvalidOperationException("Independent fixture contract: "+name);}
