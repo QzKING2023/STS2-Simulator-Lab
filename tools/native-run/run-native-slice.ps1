@@ -52,6 +52,55 @@ function Get-SemanticTraceDigest([string]$Path) {
     if(!$payloads.Count){return $null}
     return Get-TextSha256 ($payloads -join "`n")
 }
+
+function Ensure-SentryDisabledGameRoot([Parameter(Mandatory)][string]$SourceRoot) {
+    $source = [IO.Path]::GetFullPath($SourceRoot)
+    $parent = Split-Path -Parent $source
+    $leaf = Split-Path -Leaf $source
+    $target = Join-Path $parent ($leaf + '-sentry-disabled')
+    $overrideText = @"
+[rendering]
+rendering_device/driver.windows="d3d12"
+
+[sentry]
+config/dsn=""
+options/auto_init=false
+"@
+    $markerPath = Join-Path $target '.simulatorlab-sentry-disabled.json'
+    $overridePath = Join-Path $target 'override.cfg'
+    if (Test-Path -LiteralPath $target -PathType Container) {
+        if (!(Test-Path -LiteralPath $markerPath -PathType Leaf) -or !(Test-Path -LiteralPath $overridePath -PathType Leaf)) {
+            throw "Sentry-disabled overlay exists without a valid marker: $target"
+        }
+        $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
+        $expected = Get-TextSha256 $overrideText
+        $sourceExeSha = (Get-FileHash -LiteralPath (Join-Path $source 'SlayTheSpire2.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
+        $sourcePckSha = (Get-FileHash -LiteralPath (Join-Path $source 'SlayTheSpire2.pck') -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($marker.sourceRoot -ne $source -or $marker.overrideSha256 -ne $expected -or $marker.sourceExecutableSha256 -ne $sourceExeSha -or $marker.sourcePckSha256 -ne $sourcePckSha) {
+            throw "Sentry-disabled overlay does not match the requested source or override: $target"
+        }
+        return [ordered]@{ root=$target; sourceRoot=$source; overrideSha256=$expected; created=$false }
+    }
+    if (!(Test-Path -LiteralPath $source -PathType Container)) { throw "Game root is missing: $source" }
+    New-Item -ItemType Directory -Path $target -Force | Out-Null
+    foreach ($file in Get-ChildItem -LiteralPath $source -Recurse -File -Force) {
+        $relative = $file.FullName.Substring($source.Length).TrimStart('\')
+        $destination = Join-Path $target $relative
+        New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+        if ($relative -ieq 'override.cfg') { continue }
+        New-Item -ItemType HardLink -Path $destination -Target $file.FullName | Out-Null
+    }
+    Set-Content -LiteralPath $overridePath -Value $overrideText -Encoding utf8
+    $overrideSha = Get-TextSha256 $overrideText
+    [ordered]@{
+        schema='simulatorlab-sentry-disabled-overlay/v1'; sourceRoot=$source
+        sourceExecutableSha256=(Get-FileHash -LiteralPath (Join-Path $source 'SlayTheSpire2.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
+        sourcePckSha256=(Get-FileHash -LiteralPath (Join-Path $source 'SlayTheSpire2.pck') -Algorithm SHA256).Hash.ToLowerInvariant()
+        overrideSha256=$overrideSha; createdUtc=[DateTime]::UtcNow.ToString('o')
+    } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $markerPath -Encoding utf8
+    return [ordered]@{ root=$target; sourceRoot=$source; overrideSha256=$overrideSha; created=$true }
+}
+
 function Write-NativeRunEvidenceManifest {
     param($Report,[Parameter(Mandatory)]$Process,[Parameter(Mandatory)][int]$RawExit,
           [Parameter(Mandatory)][datetime]$Started,[Parameter(Mandatory)][datetime]$Finished,
@@ -107,12 +156,15 @@ function Invoke-WatcherGodotSlice {
         [string]$Replay = ''
     )
 
-    $exe = Join-Path $GameRoot 'SlayTheSpire2.exe'
-    $pck = Join-Path $GameRoot 'SlayTheSpire2.pck'
-    $probeDll = Join-Path $GameRoot 'mods/SimulatorLab.GameProbe/SimulatorLab.GameProbe.dll'
-    $probeJson = Join-Path $GameRoot 'mods/SimulatorLab.GameProbe/SimulatorLab.GameProbe.json'
-    $baseDll = Join-Path $GameRoot 'mods/BaseLib/BaseLib.dll'
-    $watcherDll = Join-Path $GameRoot 'mods/Watcher/Watcher.dll'
+    $sourceGameRoot = [IO.Path]::GetFullPath($GameRoot)
+    $overlay = Ensure-SentryDisabledGameRoot -SourceRoot $sourceGameRoot
+    $runtimeGameRoot = [string]$overlay.root
+    $exe = Join-Path $runtimeGameRoot 'SlayTheSpire2.exe'
+    $pck = Join-Path $runtimeGameRoot 'SlayTheSpire2.pck'
+    $probeDll = Join-Path $runtimeGameRoot 'mods/SimulatorLab.GameProbe/SimulatorLab.GameProbe.dll'
+    $probeJson = Join-Path $runtimeGameRoot 'mods/SimulatorLab.GameProbe/SimulatorLab.GameProbe.json'
+    $baseDll = Join-Path $runtimeGameRoot 'mods/BaseLib/BaseLib.dll'
+    $watcherDll = Join-Path $runtimeGameRoot 'mods/Watcher/Watcher.dll'
     foreach($path in @($exe,$pck,$probeDll,$probeJson,$baseDll,$watcherDll)) {
         if(!(Test-Path -LiteralPath $path -PathType Leaf)) { throw "Watcher Godot input is missing: $path" }
     }
@@ -133,7 +185,7 @@ function Invoke-WatcherGodotSlice {
     $psi = [Diagnostics.ProcessStartInfo]::new($exe)
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
-    $psi.WorkingDirectory = $GameRoot
+    $psi.WorkingDirectory = $runtimeGameRoot
     # Godot writes its complete diagnostic stream to godot.log.  Do not keep
     # inherited stdout/stderr pipes open: the native launcher can keep a
     # console handle alive after the game process has completed, which would
@@ -175,7 +227,8 @@ function Invoke-WatcherGodotSlice {
         snapshot = $env:SIMULATORLAB_WATCHER_SNAPSHOT_ROOT
         snapshotContentSha256 = '7d23eddd8a238e248b921a0f12056c2a6a2a264936a5ad56ce9ee65b30148a73'
         targetGameVersion = '0.111.0'; gameCommit = '41cef1ea'; seed = $Seed
-        gameRoot = $GameRoot; nativeBuildId = $BuildId; probePath = $probePath
+        sourceGameRoot = $sourceGameRoot; gameRoot = $runtimeGameRoot; nativeBuildId = $BuildId; probePath = $probePath
+        sentryDisabled = $true; sentryOverrideSha256 = $overlay.overrideSha256
         executableSha256 = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
         pckSha256 = (Get-FileHash -LiteralPath $pck -Algorithm SHA256).Hash
         baseLibSha256 = (Get-FileHash -LiteralPath $baseDll -Algorithm SHA256).Hash
