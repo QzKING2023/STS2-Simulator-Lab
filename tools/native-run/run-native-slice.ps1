@@ -192,7 +192,7 @@ function Invoke-WatcherGodotSlice {
     # make the parent wait forever while reading redirected streams.
     $psi.RedirectStandardOutput = $false
     $psi.RedirectStandardError = $false
-    foreach($arg in @('--headless','--quit-after','300','--log-file',(Join-Path $gameOutput 'godot.log'),'--force-steam','off')) { $psi.ArgumentList.Add($arg) }
+    foreach($arg in @('--headless','--audio-driver','Dummy','--quit-after','300','--log-file',(Join-Path $gameOutput 'godot.log'),'--force-steam','off')) { $psi.ArgumentList.Add($arg) }
     $psi.Environment['APPDATA'] = $appData
     $psi.Environment['LOCALAPPDATA'] = $localAppData
     $psi.Environment['SIMULATORLAB_WATCHER_GAME_OUTPUT'] = $gameOutput
