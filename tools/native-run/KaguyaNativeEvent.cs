@@ -9,11 +9,11 @@ namespace OfflineSearchHarness;
 
 internal static partial class Program
 {
-    internal static void KaguyaEventProbe()
+    internal static void KaguyaEventProbe(string? requestedType = null)
     {
         var manager = RunManager.Instance;
         var eventModel = ModelDb.All.OfType<EventModel>()
-            .Where(x => x.GetType().FullName == KaguyaStage8Constants.EventType)
+            .Where(x => x.GetType().FullName == (requestedType ?? KaguyaStage8Constants.EventType))
             .SingleOrDefault() ?? throw new NotSupportedException("Kaguya Taketori event is not registered");
         KaguyaNativeModLoop.SelectedEventType = eventModel.GetType().FullName;
         KaguyaNativeModLoop.GoldBefore = player!.Gold;
@@ -29,8 +29,8 @@ internal static partial class Program
         EnterAuditedEvent();
         var ev = manager.EventSynchronizer.GetLocalEvent();
         var options = ev.CurrentOptions.ToArray();
-        if (options.Length != 2)
-            throw new NotSupportedException($"Kaguya Taketori event exposed {options.Length} options; stage 8 requires exactly two");
+        if (options.Length == 0)
+            throw new NotSupportedException("Kaguya event exposed no options");
         var optionIds = options.Select(x => x.TextKey).ToArray();
         Observe("kaguya-event-entered", new
         {
@@ -40,24 +40,38 @@ internal static partial class Program
             finished = ev.IsFinished
         });
         var before = State();
-        SelectRoomOption(0);
-        var after = State();
-        var selectedOption = optionIds[0];
+        var selectedOptions = new List<string>();
+        var after = before;
+        for (var step = 0; !ev.IsFinished && step < 32; step++)
+        {
+            var current = ev.CurrentOptions.ToArray();
+            var index = requestedType == "Kaguya.Events.RainbowTelephonePole"
+                ? Array.FindIndex(current, option => !option.IsLocked)
+                : Array.FindIndex(current, option => !option.IsLocked && option.IsProceed);
+            if (index < 0)
+                index = Array.FindLastIndex(current, option => !option.IsLocked);
+            if (index < 0)
+                throw new NotSupportedException($"Kaguya event {ev.Id} exposed only locked options at step {step}");
+            var selected = current[index].TextKey;
+            selectedOptions.Add(selected);
+            SelectRoomOption(index);
+            after = State();
+            Observe("kaguya-event-option", new
+            {
+                eventId = ev.Id.ToString(), option = selected, optionIndex = index,
+                step, finished = ev.IsFinished
+            });
+        }
+        if (!ev.IsFinished)
+            throw new NotSupportedException("Kaguya event did not finish within thirty-two native options");
+        var selectedOption = selectedOptions.FirstOrDefault() ?? optionIds[0];
         var cardId = NewCardId(before, after);
         KaguyaNativeModLoop.EventObservation = new(
-            ev.Id.ToString(), ev.GetType().Name, optionIds, selectedOption,
+            ev.Id.ToString(), ev.GetType().Name, selectedOptions, selectedOption,
             "native/kaguya/event");
         KaguyaNativeModLoop.RewardObservation = new(
-            "REWARD.KAGUYA_TAKETORI_OPTION", "event-result", player.Gold - KaguyaNativeModLoop.GoldBefore,
+            requestedType is null ? "REWARD.KAGUYA_TAKETORI_OPTION" : "REWARD.KAGUYA_EVENT_PROBE", "event-result", player.Gold - KaguyaNativeModLoop.GoldBefore,
             cardId, "native/kaguya/event-result");
-        Observe("kaguya-event-option", new
-        {
-            eventId = ev.Id.ToString(),
-            option = selectedOption,
-            optionIndex = 0,
-            options = optionIds,
-            finished = ev.IsFinished
-        });
         Observe("kaguya-event-result", new
         {
             eventId = ev.Id.ToString(),

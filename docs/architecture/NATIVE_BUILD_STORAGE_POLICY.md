@@ -2,15 +2,15 @@
 
 This policy describes how `tools/native-run/build-native-run.ps1` (script
 version `native-build-run/v3`, log format `native-build-run-log/v1`) generates
-and retains build outputs, and how those outputs relate to run outputs and to
-the two maintenance entry points. It reflects the build-storage refactor; the
-refactor changed only this build script and this document —
+and retains build outputs, and how those outputs relate to the three maintenance
+entry points. It retains the build-storage refactor's boundaries — the
+original refactor changed only this build script and this document —
 `tools/native-run/run-native-slice.ps1`,
 `tools/maintenance/cleanup-native-build.ps1`, the NativeRun C# sources, tests
 and configuration are untouched, and no existing evidence directory was
 deleted or rewritten.
 
-Two maintenance entry points exist and stay separate:
+Three maintenance entry points exist and stay separate:
 
 - **In-script cache maintenance**: `build-native-run.ps1 -Cleanup` (review)
   and `-Cleanup -ApplyCleanup` (apply) manage `.build/native-build/cache`
@@ -18,6 +18,25 @@ Two maintenance entry points exist and stay separate:
 - **Batch bin/obj maintenance**: `tools/maintenance/cleanup-native-build.ps1`
   remains an independent review-first helper for
   `.build/native-build/<batch>/{bin,obj}` and is unchanged by this refactor.
+- **Workspace output maintenance**: `tools/maintenance/cleanup-workspace.ps1`
+  is the review-first boundary for explicit native build directories,
+  temporary native game roots, and named scratch directories. It removes only
+  direct children that are past the cutoff, have no tracked or retained-run
+  reference (including references found in ignored `.build/runs` evidence),
+  and pass the reparse-point and path checks. It never removes
+  `.build/runs`, `local-mods`, pinned inputs, source trees, or Git metadata.
+  The scheduled task installed for this workspace runs it daily with the
+  fourteen-day default retention window.
+
+The normal review/apply commands are:
+
+```powershell
+pwsh -NoProfile -File tools/maintenance/cleanup-workspace.ps1
+pwsh -NoProfile -File tools/maintenance/cleanup-workspace.ps1 -Apply -Confirm:$false
+```
+
+The first command is read-only. The second also invokes the batch helper for
+old `bin/obj` children and records its transcript under `.build/`.
 
 ### Batch helper (unchanged)
 

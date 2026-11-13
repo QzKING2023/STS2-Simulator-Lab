@@ -7,11 +7,14 @@ using System.Text.Json;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Combat;
+using MegaCrit.Sts2.Core.Audio.Debug;
 using MegaCrit.Sts2.Core.Debug;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Platform.Steam;
+using MegaCrit.Sts2.Core.Random;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Saves;
 using MegaCrit.Sts2.Core.TestSupport;
@@ -29,7 +32,23 @@ namespace OfflineSearchHarness;
 internal static class KaguyaNativeModLoop
 {
     internal static bool Enabled => Environment.GetEnvironmentVariable("SIMULATORLAB_KAGUYA_STAGE8") == "1";
-    internal static bool IsScenario(string scenario) => scenario is "kaguya-stage8" or "kaguya-stage8-replay";
+    internal static bool IsScenario(string scenario) => scenario is
+        "kaguya-stage8" or "kaguya-stage8-replay" or
+        "kaguya-m2-5" or "kaguya-m2-5-replay";
+    internal static bool IsContentProbeScenario(string scenario) =>
+        scenario.StartsWith("kaguya-card-probe:", StringComparison.Ordinal) ||
+        scenario.StartsWith("kaguya-relic-probe:", StringComparison.Ordinal) ||
+        scenario.StartsWith("kaguya-power-probe:", StringComparison.Ordinal) ||
+        scenario.StartsWith("kaguya-potion-probe:", StringComparison.Ordinal) ||
+        scenario.StartsWith("kaguya-enchantment-probe:", StringComparison.Ordinal) ||
+        scenario.StartsWith("kaguya-encounter-probe:", StringComparison.Ordinal) ||
+        scenario.StartsWith("kaguya-enemy-probe:", StringComparison.Ordinal) ||
+        scenario.StartsWith("kaguya-event-probe:", StringComparison.Ordinal) ||
+        scenario.StartsWith("kaguya-character-probe:", StringComparison.Ordinal);
+    internal static bool IsRunContentProbeScenario(string scenario) =>
+        scenario.StartsWith("kaguya-encounter-probe:", StringComparison.Ordinal) ||
+        scenario.StartsWith("kaguya-enemy-probe:", StringComparison.Ordinal) ||
+        scenario.StartsWith("kaguya-character-probe:", StringComparison.Ordinal);
     internal static string SnapshotRoot => Required("SIMULATORLAB_KAGUYA_SNAPSHOT_ROOT");
     internal static readonly Harmony Patches = new("simulatorlab.kaguya.stage8");
     internal static readonly Dictionary<string, Assembly> Loaded = new(StringComparer.Ordinal);
@@ -43,6 +62,11 @@ internal static class KaguyaNativeModLoop
     internal static KaguyaEventObservation? EventObservation;
     internal static KaguyaEnemyObservation? EnemyObservation;
     internal static KaguyaRewardObservation? RewardObservation;
+    private static MegaCrit.Sts2.Core.Audio.Debug.NDebugAudioManager? DebugAudioStub;
+    private static int NextAudioHandle;
+    private static readonly HashSet<int> ActiveAudioHandles = [];
+    private static readonly Dictionary<int, string> AudioStreams = [];
+    private static readonly ConditionalWeakTable<Godot.Timer, TimerState> TimerStates = new();
 
     internal static void Initialize()
     {
@@ -68,6 +92,60 @@ internal static class KaguyaNativeModLoop
         Patches.Patch(move,
             prefix: new HarmonyMethod(typeof(KaguyaNativeModLoop), nameof(EnemyMoveBefore)),
             postfix: new HarmonyMethod(typeof(KaguyaNativeModLoop), nameof(EnemyMoveAfter)));
+        var relicHoverTips = AccessTools.PropertyGetter(typeof(RelicModel), "HoverTipsExcludingRelic");
+        if (relicHoverTips is not null)
+        {
+            Patches.Patch(relicHoverTips, prefix: new HarmonyMethod(typeof(KaguyaNativeModLoop), nameof(SkipRelicHoverTips)));
+            Events.Add("kaguya-platform-bypass:relic-hover-tips-headless");
+        }
+        var debugAudio = AccessTools.TypeByName("MegaCrit.Sts2.Core.Audio.Debug.NDebugAudioManager");
+        if (debugAudio is not null)
+        {
+            var audioPlayAdapter = IsContentProbeScenario(Program.CurrentScenario) ? nameof(PlayAudioAdapter) : nameof(SkipKaguyaAudio);
+            var audioStopAdapter = IsContentProbeScenario(Program.CurrentScenario) ? nameof(StopAudioAdapter) : nameof(SkipKaguyaAudio);
+            var audioStopAllAdapter = IsContentProbeScenario(Program.CurrentScenario) ? nameof(StopAllAudioAdapter) : nameof(SkipKaguyaAudio);
+            var instance = AccessTools.PropertyGetter(debugAudio, "Instance");
+            if (instance is not null)
+                Patches.Patch(instance, prefix: new HarmonyMethod(typeof(KaguyaNativeModLoop), nameof(DebugAudioInstance)));
+            Patches.Patch(AccessTools.Method(debugAudio, "Play", [typeof(string), typeof(float), typeof(PitchVariance)])!,
+                prefix: new HarmonyMethod(typeof(KaguyaNativeModLoop), audioPlayAdapter));
+            Patches.Patch(AccessTools.Method(debugAudio, "Stop", [typeof(int), typeof(float)])!,
+                prefix: new HarmonyMethod(typeof(KaguyaNativeModLoop), audioStopAdapter));
+            Patches.Patch(AccessTools.Method(debugAudio, "StopAll", Type.EmptyTypes)!,
+                prefix: new HarmonyMethod(typeof(KaguyaNativeModLoop), audioStopAllAdapter));
+            Events.Add("kaguya-platform-bypass:debug-audio-headless");
+        }
+        var mainLoop = AccessTools.Method(typeof(Godot.Engine), nameof(Godot.Engine.GetMainLoop));
+        if (mainLoop is not null)
+        {
+            Patches.Patch(mainLoop, prefix: new HarmonyMethod(typeof(KaguyaNativeModLoop), nameof(HeadlessMainLoop)));
+            Events.Add("kaguya-platform-bypass:engine-main-loop-headless");
+        }
+        var simplifyPath = AccessTools.Method(typeof(Godot.StringExtensions), "SimplifyPath", [typeof(string)]);
+        if (simplifyPath is not null)
+        {
+            Patches.Patch(simplifyPath, prefix: new HarmonyMethod(typeof(KaguyaNativeModLoop), nameof(SkipSimplifyPath)));
+            Events.Add("kaguya-platform-bypass:string-path-headless");
+        }
+        var randRange = AccessTools.Method(typeof(Godot.GD), "RandRange", [typeof(double), typeof(double)]);
+        if (randRange is not null)
+        {
+            Patches.Patch(randRange, prefix: new HarmonyMethod(typeof(KaguyaNativeModLoop), nameof(KaguyaRandRange)));
+            Events.Add("kaguya-platform-bypass:gd-rand-range-headless");
+        }
+        var assetCache = AccessTools.TypeByName("MegaCrit.Sts2.Core.Assets.AssetCache");
+        var loadAsset = assetCache is null ? null : AccessTools.Method(assetCache, "LoadAsset", [typeof(string)]);
+        if (loadAsset is not null)
+        {
+            Patches.Patch(loadAsset, prefix: new HarmonyMethod(typeof(KaguyaNativeModLoop), nameof(SkipAssetLoad)));
+            Events.Add("kaguya-platform-bypass:asset-cache-headless");
+        }
+        var powerIcon = AccessTools.PropertyGetter(typeof(PowerModel), "Icon");
+        if (powerIcon is not null)
+        {
+            Patches.Patch(powerIcon, prefix: new HarmonyMethod(typeof(KaguyaNativeModLoop), nameof(SkipPowerIcon)));
+            Events.Add("kaguya-platform-bypass:power-icon-headless");
+        }
 
         ModManager.ResetForTests();
         var settings = new ModSettings { PlayerAgreedToModLoading = true };
@@ -89,21 +167,28 @@ internal static class KaguyaNativeModLoop
         if (ModManager.Mods.Count != 2)
             throw new InvalidOperationException("Kaguya profile loaded an unexpected Mod inventory: " +
                 string.Join(",", ModManager.Mods.Select(m => $"{m.manifest?.id}:{m.state}:{m.assemblies.Count}")));
+        InstallTimerSeam();
+        InstallEndingSeam();
         Events.Add("kaguya-runtime:initialized");
     }
 
     internal static Type[] IncludeModels(Type[] baseModels)
     {
         var abstractModel = typeof(AbstractModel);
-        return baseModels.Concat(Loaded.Values.SelectMany(SafeGetTypes)
-                .Where(t => t.IsClass && !t.IsAbstract && abstractModel.IsAssignableFrom(t) &&
-                    (typeof(MonsterModel).IsAssignableFrom(t) || typeof(EncounterModel).IsAssignableFrom(t) ||
-                     typeof(MegaCrit.Sts2.Core.Models.EventModel).IsAssignableFrom(t) ||
-                     typeof(CharacterModel).IsAssignableFrom(t) ||
-                     typeof(CardPoolModel).IsAssignableFrom(t) ||
-                     typeof(PotionPoolModel).IsAssignableFrom(t) ||
-                     typeof(RelicPoolModel).IsAssignableFrom(t) ||
-                     typeof(PowerModel).IsAssignableFrom(t))))
+        var collisionIsolatedClash = Program.CurrentScenario == "kaguya-card-probe:Kaguya.Cards.Clash";
+        if (collisionIsolatedClash)
+            Events.Add("kaguya-registration-profile:collision-isolated-card-clash");
+        var allKaguyaModels = Loaded.Values.SelectMany(SafeGetTypes)
+                .Where(t => t.IsClass && !t.IsAbstract && abstractModel.IsAssignableFrom(t))
+                .Where(t => t.FullName != "Kaguya.Cards.Clash")
+                .ToArray();
+        var gameModels = collisionIsolatedClash
+            ? baseModels.Where(t => t.FullName != "MegaCrit.Sts2.Core.Models.Cards.Clash")
+            : baseModels;
+        var kaguyaModels = collisionIsolatedClash
+            ? allKaguyaModels.Append(Loaded[KaguyaStage8Constants.ModId].GetType("Kaguya.Cards.Clash", true)!)
+            : allKaguyaModels;
+        return gameModels.Concat(kaguyaModels)
             .Distinct().ToArray();
     }
 
@@ -125,6 +210,7 @@ internal static class KaguyaNativeModLoop
         }, Program.Json);
         var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(digestInput))).ToLowerInvariant();
         var build = ReadBuildIdentity();
+        WriteContentInventory(output);
         var evidence = JsonSerializer.SerializeToElement(new
         {
             events = rows,
@@ -135,20 +221,78 @@ internal static class KaguyaNativeModLoop
             ledger = new { goldBefore = GoldBefore, goldAfter, delta = goldAfter - GoldBefore },
             isolation = new { snapshotWriteBlocked = true, formalDataWriteBlocked = true, modAssemblyOutsideCore = true }
         }, Program.Json);
+        var stage8Completed = error is null && stop == NativeRunStop.SliceBoundary &&
+            terminal == NativeRunTerminal.Ongoing;
+        var fullRunCompleted = error is null &&
+            (stop == NativeRunStop.Completed || (IsRunContentProbeScenario(Program.CurrentScenario) && stop == NativeRunStop.SliceBoundary)) &&
+            (terminal is NativeRunTerminal.Death or NativeRunTerminal.RunVictory);
+        var completed = stage8Completed || fullRunCompleted ||
+            (error is null && IsContentProbeScenario(Program.CurrentScenario));
         var probe = new KaguyaRuntimeProbe(
-            KaguyaStage8Constants.ProbeSchema, error is null && stop == NativeRunStop.SliceBoundary,
+            KaguyaStage8Constants.ProbeSchema, completed,
             KaguyaStage8Constants.TargetGameVersion, KaguyaStage8Constants.SnapshotId, seed,
             build.BuildId, build.ContentKey, KaguyaStage8Constants.ModId, EncounterId,
             SelectedEncounterType ?? KaguyaStage8Constants.EncounterType, EnemyId,
             SelectedEnemyType ?? KaguyaStage8Constants.EnemyType,
             EnemyObservation, RewardObservation?.RewardId, RewardObservation, GoldBefore,
             goldAfter, eventNames, evidence, digest, null,
-            error is null && stop == NativeRunStop.SliceBoundary ? "battle-complete" : "runtime-failed",
+            fullRunCompleted ? (terminal == NativeRunTerminal.Death ? "run-death" : "run-victory") :
+                stage8Completed ? "battle-complete" : "runtime-failed",
             error is null ? null : "native-run", error,
             EventObservation?.Id, SelectedEventType, EventObservation);
         File.WriteAllText(Path.Combine(output, replay ? "kaguya-stage8-probe-replay.json" : "kaguya-stage8-probe.json"),
             JsonSerializer.Serialize(probe, ModWorkerJson.Options));
     }
+
+    private static void WriteContentInventory(string output)
+    {
+        var registered = ModelDb.All
+            .Where(model => model.GetType().Assembly.GetName().Name == KaguyaStage8Constants.ModId)
+            .Select(model => new
+            {
+                id = model.Id.ToString(),
+                type = model.GetType().FullName ?? model.GetType().Name,
+                kind = ModelKind(model.GetType()),
+                registrationIdentity = $"REG.KAGUYA.{model.Id}@{KaguyaStage8Constants.TargetGameVersion}"
+            })
+            .OrderBy(row => row.kind, StringComparer.Ordinal)
+            .ThenBy(row => row.id, StringComparer.Ordinal)
+            .ToArray();
+        var declared = Loaded.TryGetValue(KaguyaStage8Constants.ModId, out var kaguyaAssembly)
+            ? SafeGetTypes(kaguyaAssembly)
+            .Where(type => type.IsClass && !type.IsAbstract && typeof(AbstractModel).IsAssignableFrom(type))
+            .Select(type => new
+            {
+                id = (string?)null,
+                type = type.FullName ?? type.Name,
+                kind = ModelKind(type),
+                registrationIdentity = $"TYPE.KAGUYA.{type.FullName}@{KaguyaStage8Constants.TargetGameVersion}"
+            })
+            .OrderBy(row => row.kind, StringComparer.Ordinal)
+            .ThenBy(row => row.type, StringComparer.Ordinal)
+            .ToArray()
+            : Array.Empty<object>();
+        File.WriteAllText(Path.Combine(output, "kaguya-content-inventory.json"),
+            JsonSerializer.Serialize(new
+            {
+                schema = "kaguya-content-inventory/v1",
+                targetGameVersion = KaguyaStage8Constants.TargetGameVersion,
+                snapshotId = KaguyaStage8Constants.SnapshotId,
+                modId = KaguyaStage8Constants.ModId,
+                registrationCondition = "isolated BaseLib 3.4.7 + Kaguya loader, scoped native profile",
+                registeredUnits = registered,
+                declaredUnits = declared
+            }, ModWorkerJson.Options));
+    }
+
+    private static string ModelKind(Type type) =>
+        typeof(CharacterModel).IsAssignableFrom(type) ? "Character" :
+        typeof(CardModel).IsAssignableFrom(type) ? "Card" :
+        typeof(PowerModel).IsAssignableFrom(type) ? "Power" :
+        typeof(RelicModel).IsAssignableFrom(type) ? "Relic" :
+        typeof(EncounterModel).IsAssignableFrom(type) ? "Encounter" :
+        typeof(MonsterModel).IsAssignableFrom(type) ? "Enemy" :
+        typeof(EventModel).IsAssignableFrom(type) ? "Event" : "Other";
 
     private sealed record MoveScope(string Model, string Intent, bool Attack, int Hp, int Block);
 
@@ -263,14 +407,44 @@ internal static class KaguyaNativeModLoop
                 new Harmony("BaseLib").CreateClassProcessor(patch).Patch();
                 Events.Add("baselib-patch:" + patch.FullName);
             }
+            var modAudio = assembly.GetType("BaseLib.Audio.ModAudio", throwOnError: false);
+            if (modAudio is not null)
+                foreach (var play in AccessTools.GetDeclaredMethods(modAudio).Where(method => method.Name.StartsWith("PlaySound", StringComparison.Ordinal)))
+                    Patches.Patch(play, prefix: new HarmonyMethod(typeof(KaguyaNativeModLoop), nameof(SkipKaguyaAudioResult)));
+            Events.Add("kaguya-platform-bypass:baselib-audio-headless");
         }
         else
         {
-            // The stage is intentionally scoped to the registered Nay and
-            // encounter model types. Kaguya's full initializer also installs
-            // unrelated card/relic/potion pools; invoking it would expand the
-            // ModelDb surface beyond this phase and require UI/save seams.
-            Events.Add("kaguya-initializer:scoped-enemy-encounter-profile");
+            var kaguyaCardType = assembly.GetType("Kaguya.HinaMods.Cards.HinaModsCard", throwOnError: false);
+            if (kaguyaCardType is not null)
+            {
+                var playCardSfx = AccessTools.Method(kaguyaCardType, "PlayCardSfx", [typeof(MegaCrit.Sts2.Core.Entities.Cards.CardPlay)]);
+                if (playCardSfx is not null)
+                    Patches.Patch(playCardSfx, prefix: new HarmonyMethod(typeof(KaguyaNativeModLoop), nameof(SkipKaguyaAudio)));
+                var playHitSfx = AccessTools.Method(kaguyaCardType, "PlayHitSfx", Type.EmptyTypes);
+                if (playHitSfx is not null)
+                    Patches.Patch(playHitSfx, prefix: new HarmonyMethod(typeof(KaguyaNativeModLoop), nameof(SkipKaguyaAudio)));
+                Events.Add("kaguya-platform-bypass:card-audio-headless");
+            }
+            var initializerTypes = SafeGetTypes(assembly)
+                .Where(type => type.GetCustomAttribute<ModInitializerAttribute>() is not null)
+                .ToArray();
+            if (Environment.GetEnvironmentVariable("SIMULATORLAB_KAGUYA_FULL_INIT") == "1")
+            {
+                foreach (var type in initializerTypes)
+                {
+                    var attribute = type.GetCustomAttribute<ModInitializerAttribute>()!;
+                    var method = type.GetMethod(attribute.initializerMethod,
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+                        ?? throw new MissingMethodException(type.FullName, attribute.initializerMethod);
+                    method.Invoke(null, null);
+                    Events.Add($"kaguya-initializer:{type.FullName}.{method.Name}");
+                }
+            }
+            else
+            {
+                Events.Add("kaguya-initializer:disabled");
+            }
         }
     }
 
@@ -287,6 +461,247 @@ internal static class KaguyaNativeModLoop
     private static bool CommandLine(ref string[] __result) { __result = []; return false; }
     private static bool RejectCopy() => throw new InvalidOperationException("Kaguya ModManager attempted forbidden save copy");
     private static bool SkipGodotScriptLookup() => false;
+    private static bool SkipKaguyaAudio() => false;
+    private static bool SkipKaguyaAudioResult(ref Godot.AudioStreamPlayer? __result)
+    {
+        __result = null;
+        return false;
+    }
+    private static bool SkipSimplifyPath(string instance, ref string __result)
+    {
+        __result = instance;
+        return false;
+    }
+    private static bool KaguyaRandRange(double from, double to, ref double __result)
+    {
+        var rng = Program.CurrentPlayer?.RunState.Rng.Niche ?? throw new InvalidOperationException("Kaguya GD.RandRange requires native run RNG");
+        __result = rng.NextDouble(from, to);
+        return false;
+    }
+
+    private static bool HeadlessMainLoop(ref Godot.MainLoop? __result)
+    {
+        __result = null;
+        return false;
+    }
+    private static bool DebugAudioInstance(ref MegaCrit.Sts2.Core.Audio.Debug.NDebugAudioManager? __result)
+    {
+        DebugAudioStub ??= (MegaCrit.Sts2.Core.Audio.Debug.NDebugAudioManager)
+            RuntimeHelpers.GetUninitializedObject(typeof(MegaCrit.Sts2.Core.Audio.Debug.NDebugAudioManager));
+        __result = DebugAudioStub;
+        return false;
+    }
+
+    private static bool PlayAudioAdapter(string streamName, float volume, PitchVariance variance, ref int __result)
+    {
+        var handle = NextAudioHandle++;
+        ActiveAudioHandles.Add(handle);
+        AudioStreams[handle] = streamName;
+        Program.Observe("kaguya-audio-play", new { handle, streamName, volume, variance = variance.ToString(), adapter = "managed-debug-audio/v1" });
+        __result = handle;
+        return false;
+    }
+
+    private static bool StopAudioAdapter(int id, float fadeTime)
+    {
+        var removed = ActiveAudioHandles.Remove(id);
+        AudioStreams.Remove(id);
+        Program.Observe("kaguya-audio-stop", new { handle = id, fadeTime, removed, adapter = "managed-debug-audio/v1" });
+        return false;
+    }
+
+    private static bool StopAllAudioAdapter()
+    {
+        var count = ActiveAudioHandles.Count;
+        ActiveAudioHandles.Clear();
+        AudioStreams.Clear();
+        Program.Observe("kaguya-audio-stop-all", new { count, adapter = "managed-debug-audio/v1" });
+        return false;
+    }
+
+    private sealed class TimerState
+    {
+        internal double WaitTime;
+        internal bool OneShot;
+        internal bool Autostart;
+        internal bool Paused;
+        internal bool IgnoreTimeScale;
+        internal bool Stopped = true;
+        internal Action? Timeout;
+    }
+
+    private static void InstallTimerSeam()
+    {
+        var monster = Loaded[KaguyaStage8Constants.ModId].GetType("Kaguya.Monsters.TsukitoBosatsu", true)!;
+        var afterAdded = AccessTools.Method(monster, nameof(MegaCrit.Sts2.Core.Models.MonsterModel.AfterAddedToRoom))!;
+        var stateMachine = afterAdded.GetCustomAttribute<AsyncStateMachineAttribute>()?.StateMachineType
+            ?? throw new InvalidOperationException("TsukitoBosatsu.AfterAddedToRoom has no async state machine");
+        var moveNext = AccessTools.Method(stateMachine, "MoveNext")!;
+        Patches.Patch(moveNext, transpiler: new HarmonyMethod(typeof(KaguyaNativeModLoop), nameof(TimerStateMachineTranspiler)));
+        var addChild = AccessTools.Method(typeof(Godot.Node), nameof(Godot.Node.AddChild), [typeof(Godot.Node), typeof(bool), typeof(Godot.Node.InternalMode)]);
+        if (addChild is not null)
+            Patches.Patch(addChild, prefix: new HarmonyMethod(typeof(KaguyaNativeModLoop), nameof(AddManagedTimerChild)));
+        var queueFree = AccessTools.Method(typeof(Godot.Node), nameof(Godot.Node.QueueFree), Type.EmptyTypes);
+        if (queueFree is not null)
+            Patches.Patch(queueFree, prefix: new HarmonyMethod(typeof(KaguyaNativeModLoop), nameof(QueueFreeManagedTimer)));
+        Events.Add("kaguya-platform-bypass:timer-managed-lifecycle/v1");
+    }
+
+    private static void InstallEndingSeam()
+    {
+        var ending = Loaded[KaguyaStage8Constants.ModId].GetType("Kaguya.Events.KaguyaEnding", true)!;
+        var proceed = AccessTools.DeclaredMethod(ending, "Proceed");
+        var stateMachine = proceed?.GetCustomAttribute<AsyncStateMachineAttribute>()?.StateMachineType;
+        var moveNext = stateMachine is null ? null : AccessTools.Method(stateMachine, "MoveNext");
+        if (moveNext is not null)
+            Patches.Patch(moveNext, transpiler: new HarmonyMethod(typeof(KaguyaNativeModLoop), nameof(EndingStateMachineTranspiler)));
+        var gameOver = typeof(NRun).GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            .FirstOrDefault(method => method.Name == nameof(NRun.ShowGameOverScreen) && method.GetParameters().Length == 1);
+        if (gameOver is not null)
+            Patches.Patch(gameOver, prefix: new HarmonyMethod(typeof(KaguyaNativeModLoop), nameof(SkipMissingGameOverUi)));
+        Events.Add("kaguya-platform-bypass:ending-ui-managed-lifecycle/v1");
+    }
+
+    private static NRun GetManagedRunNode()
+    {
+        var result = NRun.Instance;
+        if (result is not null) return result;
+        result = (NRun)RuntimeHelpers.GetUninitializedObject(typeof(NRun));
+        Program.Observe("kaguya-ending-ui-node-created", new { type = "NRun", adapter = "managed-ending-ui/v1" });
+        return result;
+    }
+
+    private static IEnumerable<CodeInstruction> EndingStateMachineTranspiler(IEnumerable<CodeInstruction> source)
+    {
+        var getter = AccessTools.PropertyGetter(typeof(NRun), nameof(NRun.Instance));
+        var replacement = AccessTools.Method(typeof(KaguyaNativeModLoop), nameof(GetManagedRunNode))!;
+        foreach (var instruction in source)
+        {
+            if (getter is not null && instruction.Calls(getter))
+            {
+                instruction.opcode = System.Reflection.Emit.OpCodes.Call;
+                instruction.operand = replacement;
+            }
+            yield return instruction;
+        }
+    }
+
+    private static bool SkipMissingGameOverUi(object __instance)
+    {
+        Program.Observe("kaguya-ending-ui-state", new
+        {
+            state = "game-over",
+            receiverPresent = __instance is not null,
+            adapter = "managed-ending-ui/v1",
+            originalRunManagerOnEnded = true
+        });
+        return false;
+    }
+
+    private static TimerState TimerStateFor(Godot.Timer timer) => TimerStates.GetOrCreateValue(timer);
+    private static Godot.Timer CreateManagedTimer()
+    {
+        var timer = (Godot.Timer)RuntimeHelpers.GetUninitializedObject(typeof(Godot.Timer));
+        _ = TimerStateFor(timer);
+        Program.Observe("kaguya-timer-created", new { type = "Godot.Timer", adapter = "managed-timer/v1" });
+        return timer;
+    }
+    private static void SetManagedTimerWaitTime(Godot.Timer timer, double timeSec) => TimerStateFor(timer).WaitTime = timeSec;
+    private static void SetManagedTimerOneShot(Godot.Timer timer, bool enable) => TimerStateFor(timer).OneShot = enable;
+    private static void SetManagedTimerAutostart(Godot.Timer timer, bool enable) => TimerStateFor(timer).Autostart = enable;
+    private static void AddManagedTimerTimeout(Godot.Timer timer, Action value)
+    {
+        TimerStateFor(timer).Timeout += value;
+        Program.Observe("kaguya-timer-handler-bound", new { type = "Godot.Timer", adapter = "managed-timer/v1" });
+    }
+
+    private static IEnumerable<CodeInstruction> TimerStateMachineTranspiler(IEnumerable<CodeInstruction> source)
+    {
+        var timer = typeof(Godot.Timer);
+        var constructor = AccessTools.Constructor(timer, Type.EmptyTypes)!;
+        var replacements = new Dictionary<MethodInfo, MethodInfo>
+        {
+            [AccessTools.Method(timer, "set_WaitTime")!] = AccessTools.Method(typeof(KaguyaNativeModLoop), nameof(SetManagedTimerWaitTime))!,
+            [AccessTools.Method(timer, "set_OneShot")!] = AccessTools.Method(typeof(KaguyaNativeModLoop), nameof(SetManagedTimerOneShot))!,
+            [AccessTools.Method(timer, "set_Autostart")!] = AccessTools.Method(typeof(KaguyaNativeModLoop), nameof(SetManagedTimerAutostart))!,
+            [AccessTools.Method(timer, "add_Timeout")!] = AccessTools.Method(typeof(KaguyaNativeModLoop), nameof(AddManagedTimerTimeout))!
+        };
+        var addChild = AccessTools.Method(typeof(Godot.Node), nameof(Godot.Node.AddChild), [typeof(Godot.Node), typeof(bool), typeof(Godot.Node.InternalMode)]);
+        var attachChild = AccessTools.Method(typeof(KaguyaNativeModLoop), nameof(AttachManagedTimerChild), [typeof(Godot.Node), typeof(Godot.Node), typeof(bool), typeof(Godot.Node.InternalMode)]);
+        foreach (var instruction in source)
+        {
+            if (instruction.opcode == System.Reflection.Emit.OpCodes.Newobj && instruction.operand is ConstructorInfo ctor && ctor == constructor)
+            {
+                instruction.opcode = System.Reflection.Emit.OpCodes.Call;
+                instruction.operand = AccessTools.Method(typeof(KaguyaNativeModLoop), nameof(CreateManagedTimer))!;
+            }
+            else
+            {
+                var match = replacements.Keys.FirstOrDefault(method => instruction.Calls(method));
+                if (match is not null)
+                {
+                    instruction.opcode = System.Reflection.Emit.OpCodes.Call;
+                    instruction.operand = replacements[match];
+                }
+                else if (addChild is not null && attachChild is not null && instruction.Calls(addChild))
+                {
+                    // The original expression can have a null NCombatRoom.Instance.
+                    // A static call keeps that null as data so the managed timer seam
+                    // can retain the callback and cleanup evidence without dereferencing
+                    // a missing Godot parent before the adapter runs.
+                    instruction.opcode = System.Reflection.Emit.OpCodes.Call;
+                    instruction.operand = attachChild;
+                }
+            }
+            yield return instruction;
+        }
+    }
+
+    private static void AttachManagedTimerChild(
+        Godot.Node? node,
+        Godot.Node child,
+        bool forceReadableName,
+        Godot.Node.InternalMode internalMode)
+    {
+        if (child is Godot.Timer)
+        {
+            Program.Observe("kaguya-timer-attached", new { type = "Godot.Timer", adapter = "managed-timer/v1", parentPresent = node is not null });
+            return;
+        }
+
+        node?.AddChild(child, forceReadableName, internalMode);
+    }
+
+    private static bool AddManagedTimerChild(Godot.Node node)
+    {
+        if (node is not Godot.Timer) return true;
+        Program.Observe("kaguya-timer-attached", new { type = "Godot.Timer", adapter = "managed-timer/v1" });
+        return false;
+    }
+    private static bool QueueFreeManagedTimer(Godot.Node __instance)
+    {
+        if (__instance is not Godot.Timer timer) return true;
+        var state = TimerStateFor(timer);
+        state.Timeout = null;
+        state.Stopped = true;
+        Program.Observe("kaguya-timer-cleanup", new { type = "Godot.Timer", adapter = "managed-timer/v1" });
+        return false;
+    }
+    private static bool SkipAssetLoad(ref Godot.Resource? __result)
+    {
+        __result = null;
+        return false;
+    }
+    private static bool SkipPowerIcon(ref Godot.Texture2D? __result)
+    {
+        __result = null;
+        return false;
+    }
+    private static bool SkipRelicHoverTips(ref IEnumerable<MegaCrit.Sts2.Core.HoverTips.IHoverTip> __result)
+    {
+        __result = Array.Empty<MegaCrit.Sts2.Core.HoverTips.IHoverTip>();
+        return false;
+    }
     private static bool HostHasArgument(string argument) => Environment.GetCommandLineArgs().Any(value => value == argument || value == "--" + argument);
     private static IEnumerable<CodeInstruction> CommandLineQueryBridge(IEnumerable<CodeInstruction> source)
     {

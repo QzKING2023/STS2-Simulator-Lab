@@ -52,6 +52,8 @@ internal static partial class Program
         return RunState.CreateForNewRun([player], acts, [], GameMode.Standard, 0, seed);
     }
     static string scenario="slice-skip";
+    internal static string CurrentScenario => scenario;
+    internal static MegaCrit.Sts2.Core.Entities.Players.Player? CurrentPlayer => player;
     static NativeScenario provenance=null!;
     static IDisposable? selectorScope;
     internal static bool CombatActionActive;
@@ -405,7 +407,27 @@ internal static partial class Program
             if(control=="stale")new NativeDecisionTicket(run,sequence,"before","Travel").Consume(run,sequence+1,"before","Travel");
             if(NativeFoundationModLoop.IsScenario(scenario)){Travel();Ready();Battle();if(terminal==NativeRunTerminal.Death)stop=NativeRunStop.Completed;else{Rewards();Travel(preferCombat:true);Ready();Observe("foundation-cross-room-boundary");stop=NativeRunStop.SliceBoundary;}}
             else if(WatcherNativeModLoop.IsScenario(scenario)){Travel();Ready();Battle();if(terminal==NativeRunTerminal.Death)stop=NativeRunStop.Completed;else{Rewards();Travel();Ready();stop=NativeRunStop.SliceBoundary;}}
-            else if(KaguyaNativeModLoop.IsScenario(scenario)){KaguyaEventProbe();stop=NativeRunStop.SliceBoundary;}
+            else if(KaguyaNativeModLoop.IsScenario(scenario))
+            {
+                if (scenario is "kaguya-stage8" or "kaguya-stage8-replay")
+                {
+                    KaguyaEventProbe();
+                    stop = NativeRunStop.SliceBoundary;
+                }
+                else
+                {
+                    KaguyaEncounterProbe();
+                    stop = terminal is NativeRunTerminal.Death or NativeRunTerminal.RunVictory
+                        ? NativeRunStop.Completed : NativeRunStop.SliceBoundary;
+                }
+            }
+            else if(KaguyaNativeModLoop.IsContentProbeScenario(scenario))
+            {
+                KaguyaContentProbe();
+                stop = KaguyaNativeModLoop.IsRunContentProbeScenario(scenario) &&
+                    terminal is NativeRunTerminal.Death or NativeRunTerminal.RunVictory
+                    ? NativeRunStop.Completed : NativeRunStop.SliceBoundary;
+            }
             else if(MinionNativeModLoop.IsScenario(scenario)){
                 if(MinionNativeModLoop.IsRealCombatScenario(scenario)){
                     Travel();

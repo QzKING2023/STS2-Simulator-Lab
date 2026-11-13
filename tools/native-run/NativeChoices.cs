@@ -113,6 +113,16 @@ internal sealed class NativeChoices : ICardSelector
         if(matches.Length!=1)throw new NativeDataException("Native reward identity mismatch");
         var pending=matches[0];Emit("choice-reward-completed",new{id=pending.Id,objects=new[]{NativeIdentity.Ref(acquired)}});pendingRewards.Remove(pending);
     }
+    internal static void CompleteObservedRewards(Player player)
+    {
+        foreach(var pending in pendingRewards.ToArray())
+        {
+            if(!player.Deck.Cards.Any(card=>ReferenceEquals(card,pending.Card)))
+                throw new NativeDataException("Native reward returned without acquired permanent instance");
+            Emit("choice-reward-completed",new{id=pending.Id,objects=new[]{NativeIdentity.Ref(pending.Card)},source="kaguya-content-probe-opening"});
+            pendingRewards.Remove(pending);
+        }
+    }
     static string[] Validate(NativeChoiceAnswer a,string id,string context,string stamp,string[] handles,int min,int max)
     {
         if(Consumed.Contains(id)||a.Request!=id||a.Context!=context||a.Stamp!=stamp||a.Selected==null||a.Selected.Length<min||a.Selected.Length>max||a.Selected.Distinct().Count()!=a.Selected.Length||a.Selected.Any(x=>!handles.Contains(x)))

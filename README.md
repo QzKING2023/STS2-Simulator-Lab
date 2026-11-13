@@ -30,6 +30,8 @@ dotnet run --project tests/SimulatorLab.Core.Checks/SimulatorLab.Core.Checks.csp
 
 Game-bound runs require locally supplied pinned dependencies and the prepared upstream harness. Use `tools/native-run/build-native-run.ps1` and `run-native-slice.ps1`; the [final report](docs/milestones/M1_FINAL_ACCEPTANCE.md#6-复现入口与证据位置) describes the exact responsibilities and current replay mode. Build/run outputs must use fresh directories. Local locks, binaries and original evidence stay in ignored `.build/` directories; hashes in reports do not imply those assets are bundled.
 
+Generated outputs are review-first and reference-aware. Run `pwsh -NoProfile -File tools/maintenance/cleanup-workspace.ps1` to review stale native builds, game staging roots and scratch directories; add `-Apply -Confirm:$false` to apply the cleanup. The helper scans retained ignored `.build/runs` evidence before deciding what is stale, and preserves `.build/runs`, pinned inputs, the local Workshop snapshot and any output referenced by tracked reports or retained evidence. Reinstall the daily guard with `pwsh -NoProfile -File tools/maintenance/register-workspace-cleanup.ps1 -Confirm:$false`.
+
 ## Retained Mod foundation
 
 Eleanor v0.4.1 has bounded form/resource/card and two-battle compatibility evidence, retained on its separate frozen build. It is not the new public Mod interface or complete character support. See [two battles](docs/validation/TWO_BATTLE_VALIDATION.md) and [reward-card repairs](docs/validation/REWARD_CARD_REVIEW_REPAIRS.md). New Mod expansion remains deferred.
