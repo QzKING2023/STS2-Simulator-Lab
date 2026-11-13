@@ -27,8 +27,15 @@ namespace OfflineSearchHarness;
 internal static class MinionNativeModLoop
 {
     internal static bool Enabled => Environment.GetEnvironmentVariable("SIMULATORLAB_MINION_STAGE9") == "1";
-    internal static bool IsScenario(string scenario) => scenario is "minion-stage9" or "minion-stage9-replay" or "minion-stage10" or "minion-stage10-replay";
-    internal static bool IsRealCombatScenario(string scenario) => scenario is "minion-stage10" or "minion-stage10-replay";
+    internal static bool IsScenario(string scenario) => scenario is
+        "minion-stage9" or "minion-stage9-replay" or
+        "minion-stage10" or "minion-stage10-replay" or
+        "natural-death-minion" or "natural-death-minion-replay";
+    internal static bool IsRealCombatScenario(string scenario) => scenario is
+        "minion-stage10" or "minion-stage10-replay" or
+        "natural-death-minion" or "natural-death-minion-replay";
+    internal static bool IsFullRunScenario(string scenario) => scenario is
+        "natural-death-minion" or "natural-death-minion-replay";
     internal static Assembly? Resolve(AssemblyLoadContext context, AssemblyName name)
     {
         var simple = name.Name ?? "";
@@ -180,16 +187,22 @@ internal static class MinionNativeModLoop
             RealCombatObservation, Events = eventNames
         }, Program.Json);
         var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(digestInput))).ToLowerInvariant();
+        var scenario = Environment.GetCommandLineArgs().ElementAtOrDefault(5) ?? "";
+        var fullRun = IsFullRunScenario(scenario);
+        var successful = error is null && (stop is NativeRunStop.SliceBoundary or NativeRunStop.Completed);
+        var probeTerminal = successful
+            ? fullRun ? terminal.ToString() : "lifecycle-complete"
+            : "runtime-failed";
         var probe = new MinionRuntimeProbe(
             IsRealCombatScenario(Environment.GetCommandLineArgs().ElementAtOrDefault(5) ?? "")
                 ? MinionStage10Constants.ProbeSchema : MinionStage9Constants.ProbeSchema,
-            error is null && stop == NativeRunStop.SliceBoundary,
+            successful,
             MinionStage9Constants.TargetGameVersion, MinionStage9Constants.SnapshotId, seed,
             build.BuildId, build.ContentKey, MinionInitialized, ShadowverseLoaded,
             ShadowverseRegistered, IsRealCombatScenario(Environment.GetCommandLineArgs().ElementAtOrDefault(5) ?? "") && RealCombatObservation is not null,
             LoadOrder.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
             eventNames, MinionObservation, ComponentObservation, true, true, digest, null,
-            error is null && stop == NativeRunStop.SliceBoundary ? "lifecycle-complete" : "runtime-failed",
+            probeTerminal,
             error is null ? null : "native-run", error, RealCombatObservation, RealCombatEvents.ToArray());
         var stage10 = IsRealCombatScenario(Environment.GetCommandLineArgs().ElementAtOrDefault(5) ?? "");
         File.WriteAllText(Path.Combine(output, replay

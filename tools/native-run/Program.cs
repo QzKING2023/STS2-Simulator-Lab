@@ -432,10 +432,20 @@ internal static partial class Program
                 if(MinionNativeModLoop.IsRealCombatScenario(scenario)){
                     Travel();
                     RunMinionRealCombatSlice(seed);
+                    if(MinionNativeModLoop.IsFullRunScenario(scenario) && terminal is not (NativeRunTerminal.Death or NativeRunTerminal.RunVictory))
+                    {
+                        Rewards();
+                        Travel(preferCombat:true);
+                        Battle();
+                        if (terminal is not (NativeRunTerminal.Death or NativeRunTerminal.RunVictory))
+                            throw new NativeDataException("Minion full-run slice did not reach a native terminal");
+                    }
                 } else {
                     MinionNativeModLoop.RunLifecycleFixture(seed);
                 }
-                stop=NativeRunStop.SliceBoundary;
+                stop=MinionNativeModLoop.IsFullRunScenario(scenario) &&
+                    terminal is NativeRunTerminal.Death or NativeRunTerminal.RunVictory
+                    ? NativeRunStop.Completed : NativeRunStop.SliceBoundary;
             }
             else if(NativeSolverRun.Active){SolverTwoBattles();stop=terminal==NativeRunTerminal.Death?NativeRunStop.Completed:NativeRunStop.SliceBoundary;}
             else if(NativeEventFixtures.Active){AcceptanceEventFixture();stop=NativeRunStop.SliceBoundary;}
